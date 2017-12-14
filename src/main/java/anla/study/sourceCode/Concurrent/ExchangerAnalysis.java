@@ -93,11 +93,20 @@ public class Exchanger<V> {
      * 对node是
      */
     @sun.misc.Contended static final class Node {
+    	/**
+    	 * node在arena数组里面的索引
+    	 */
         int index;              // Arena index 索引
-        int bound;              // Last recorded value of Exchanger.bound 最后的exchanger的记录值
+        int bound;              // Last recorded value of Exchanger.bound 最后的exchanger的记录值。
         int collides;           // Number of CAS failures at current bound  如果CAS失败，就冲突
-        int hash;               // Pseudo-random for spins  伪随机数的自旋
+        int hash;               // Pseudo-random for spins  伪随机数的自旋，用于设定自旋次数。
+        /**
+         * 自己的资源
+         */
         Object item;            // This thread's current item  线程的当前对象
+        /**
+         * 对方的资源
+         */
         volatile Object match;  // Item provided by releasing thread  被释放线程提供的对象唉嗯
         volatile Thread parked; // Set to this thread when parked, else null 当park时候，就把当前线程设置进去，否则为null。  
     }
@@ -152,52 +161,56 @@ public class Exchanger<V> {
      * @return the other thread's item; or null if interrupted; or
      * TIMED_OUT if timed and timed out
      * 
+     * 
+     * 
      * 当是启用了arenas的时候，的更换方法。保存above。
+     * 也就是并发大时候，把slot换为数组操作。
      */
     private final Object arenaExchange(Object item, boolean timed, long ns) {
-        Node[] a = arena;
-        Node p = participant.get();      //获取participant的私有数据。
-        for (int i = p.index;;) {                      // access slot at i 从i的位置去访问slot
-            int b, m, c; long j;                       // j is raw array offset j是偏移量
-            Node q = (Node)U.getObjectVolatile(a, j = (i << ASHIFT) + ABASE);   //CAS方式获取q
-            if (q != null && U.compareAndSwapObject(a, j, q, null)) {         //q不为null，那么就置null
-                Object v = q.item;                     // release 获取q的item
-                q.match = item;                   //赋值q的match为传入的item
+        Node[] a = arena;   //本地获取arena
+        Node p = participant.get();      //获取当前线程的node节点。
+        for (int i = p.index;;) {                      // 获得p在arena的索引
+            int b, m, c; long j;                       //j是偏移量
+            Node q = (Node)U.getObjectVolatile(a, j = (i << ASHIFT) + ABASE);   //CAS方式从数组a里面获取q
+            if (q != null && U.compareAndSwapObject(a, j, q, null)) {         //q不为null，就去跟它交换，并且置null
+                Object v = q.item;                     // 获取它的item
+                q.match = item;                   //把自己的item给他
                 Thread w = q.parked;               //获取w并且唤醒它。
                 if (w != null)
                     U.unpark(w);
                 return v;
             }
-            else if (i <= (m = (b = bound) & MMASK) && q == null) {    //q为null或者CAS更换失败，说明冲突了。
-                p.item = item;                         // offer  把传入的item复制给p的item
-                if (U.compareAndSwapObject(a, j, null, p)) {       //CAS方式，把p更换null。
-                    long end = (timed && m == 0) ? System.nanoTime() + ns : 0L;   //获取end时间
+            else if (i <= (m = (b = bound) & MMASK) && q == null) {
+            	//q为null，就说明这个位置没人，我就占这儿。
+                p.item = item;                         // 自己要等待嘛，所以把自己的node节点的item，放入传入的item
+                if (U.compareAndSwapObject(a, j, null, p)) {       //CAS方式，把p更换null。即尝试去占坑
+                    long end = (timed && m == 0) ? System.nanoTime() + ns : 0L;   //如果有，获取end时间
                     Thread t = Thread.currentThread(); // wait  获取当前线程
                     for (int h = p.hash, spins = SPINS;;) {  //自旋操作
                         Object v = p.match;
-                        if (v != null) {             //p的match不为null，说明找到了，
+                        if (v != null) {             
+                        	//p的match不为null，说明自旋时候找到了配对的对方。需要做的就是把东西带走，坑置空，腾出位置
                             U.putOrderedObject(p, MATCH, null); //清空一些信息
                             p.item = null;             // clear for next use
                             p.hash = h;
                             return v;
                         }
                         else if (spins > 0) {
-                        	//伪随机发，有经验的去将当前线程挂起，yield
+                        	//伪随机发，有经验的去将当前线程挂起，设定自旋
                             h ^= h << 1; h ^= h >>> 3; h ^= h << 10; // xorshift
                             if (h == 0)                // initialize hash
                                 h = SPINS | (int)t.getId();
                             else if (h < 0 &&          // approx 50% true
                                      (--spins & ((SPINS >>> 1) - 1)) == 0)
-                                Thread.yield();        // two yields per wait
+                                Thread.yield();        // 睡眠一会
                         }
                         else if (U.getObjectVolatile(a, j) != p)
-                            spins = SPINS;       // releaser hasn't set match yet
+                            spins = SPINS;       // 如果不是自己，则继续自旋。
                         else if (!t.isInterrupted() && m == 0 &&
                                  (!timed ||
                                   (ns = end - System.nanoTime()) > 0L)) {
                         	
-                        	//等了多次没等到，那就挂起。
-                        	//
+                        	//等了多次没等到，到时间了，那就挂起。免得浪费资源
                             U.putObject(t, BLOCKER, this); // emulate LockSupport
                             p.parked = t;              // minimize window
                             if (U.getObjectVolatile(a, j) == p)
@@ -207,24 +220,25 @@ public class Exchanger<V> {
                         }
                         else if (U.getObjectVolatile(a, j) == p &&
                                  U.compareAndSwapObject(a, j, p, null)) {
-                        	//
+                        	//当前位置j仍然是p，并且成功把p换为了null。也就是放弃，并重新找个位置开始
                             if (m != 0)                // try to shrink
                                 U.compareAndSwapInt(this, BOUND, b, b + SEQ - 1);
                             p.item = null;
                             p.hash = h;
-                            i = p.index >>>= 1;        // descend
+                            i = p.index >>>= 1;        // 减半，
                             if (Thread.interrupted())
                                 return null;
-                            if (timed && m == 0 && ns <= 0L)
+                            if (timed && m == 0 && ns <= 0L)  //超时返回空
                                 return TIMED_OUT;
                             break;                     // expired; restart 重新开始
                         }
                     }
                 }
                 else
-                    p.item = null;                     // clear offer
+                    p.item = null;                     // 没有占坑成功，那么就不换。
             }
             else {
+            	//需要的这个index，有人
                 if (p.bound != b) {                    // stale; reset 重置
                     p.bound = b;
                     p.collides = 0;
@@ -232,6 +246,7 @@ public class Exchanger<V> {
                 }
                 else if ((c = p.collides) < m || m == FULL ||
                          !U.compareAndSwapInt(this, BOUND, b, b + SEQ + 1)) {
+                	//CAS失败，增加冲突值。
                     p.collides = c + 1;
                     i = (i == 0) ? m : i - 1;          // cyclically traverse
                 }
@@ -252,33 +267,34 @@ public class Exchanger<V> {
      * was enabled or the thread was interrupted before completion; or
      * TIMED_OUT if timed and timed out
      * 
-     * exchange方法，当arenas可用时，也就是冲突时候。
+     * 当没有冲突时候，也就是只有slot来交换数据的时候。
      */
     private final Object slotExchange(Object item, boolean timed, long ns) {
-        Node p = participant.get();   //获取node
+        Node p = participant.get();   //获取当前线程私有的node
         Thread t = Thread.currentThread();   //当前线程
         if (t.isInterrupted()) // preserve interrupt status so caller can recheck  如果已经中断了。
             return null;
 
         for (Node q;;) {
-            if ((q = slot) != null) {    //slot不为null时候。
-                if (U.compareAndSwapObject(this, SLOT, q, null)) {  //null去替换q。
-                    Object v = q.item;
-                    q.match = item;
-                    Thread w = q.parked;
+            if ((q = slot) != null) {    //slot不为null时候，有人已经占了坑
+                if (U.compareAndSwapObject(this, SLOT, q, null)) {  //null去替换q。也就是把这个slot置空，因为我来找你交换了啊，所以不用站这里了
+                    Object v = q.item;   //记录相关slot里面线程所持有的数据。
+                    q.match = item;    //我把你的也获取到。
+                    Thread w = q.parked;  //交换完东西，唤醒你。
                     if (w != null)
                         U.unpark(w);
                     return v;
                 }
-                // create arena on contention, but continue until slot null
-                if (NCPU > 1 && bound == 0 &&      //多cpu。创建一个carena
-                    U.compareAndSwapInt(this, BOUND, 0, SEQ))
-                    arena = new Node[(FULL + 2) << ASHIFT];
+                // create arena on contention, but continue until slot null，
+                //如果走到这一步，就说明CAS失败了，判断是否需要用arena数组来支持。
+                if (NCPU > 1 && bound == 0 &&      
+                    U.compareAndSwapInt(this, BOUND, 0, SEQ))     //用SEQ去替换0
+                    arena = new Node[(FULL + 2) << ASHIFT];     //初始化arena数组
             }
             else if (arena != null)
-                return null; // caller must reroute to arenaExchange   //必须重新执行arenaExchange方法。
+                return null; // caller must reroute to arenaExchange   //slot为null，但是arena不为空，那么就退出去执行arenaExchange方法。
             else {
-            	//重置。
+            	//slot为null，arena也为null，那么就说明现在没有线程到，当前线程是第一个到的，所以把p也就是threadLocal里面东西存到slot里面。
                 p.item = item;
                 if (U.compareAndSwapObject(this, SLOT, null, p))
                     break;
@@ -288,22 +304,26 @@ public class Exchanger<V> {
 
         // await release 等待去释放。
         int h = p.hash;
-        long end = timed ? System.nanoTime() + ns : 0L;
-        int spins = (NCPU > 1) ? SPINS : 1;
+        long end = timed ? System.nanoTime() + ns : 0L;       //如果设定有超时获取时间。
+        int spins = (NCPU > 1) ? SPINS : 1;     //设定自旋，如果是单核则次数为1
         Object v;
         while ((v = p.match) == null) {
+        	//p为当前线程的node，v即对方的资源为null，所以没有来，我就自旋等会。
             if (spins > 0) {
             	//选择一个自旋次数
                 h ^= h << 1; h ^= h >>> 3; h ^= h << 10;
                 if (h == 0)
                     h = SPINS | (int)t.getId();
                 else if (h < 0 && (--spins & ((SPINS >>> 1) - 1)) == 0)
+                	//休息一会
                     Thread.yield();
             }
             else if (slot != p)
+            	//这个slot不是自己，被别人抢走了。
                 spins = SPINS;
             else if (!t.isInterrupted() && arena == null &&
                      (!timed || (ns = end - System.nanoTime()) > 0L)) {
+            	//没有中断，且没有超时，那么你就park吧。
             	//park过程。
                 U.putObject(t, BLOCKER, this);
                 p.parked = t;
@@ -312,11 +332,13 @@ public class Exchanger<V> {
                 p.parked = null;
                 U.putObject(t, BLOCKER, null);
             }
-            else if (U.compareAndSwapObject(this, SLOT, p, null)) {
+            else if (U.compareAndSwapObject(this, SLOT, p, null)) {   
+            	//成功把slot置空，那么就跳出循环，此时要么返回超时，要么返回空。
                 v = timed && ns <= 0L && !t.isInterrupted() ? TIMED_OUT : null;
                 break;
             }
         }
+        //CAS防止重排序法，把match设为null，因为什么也没拿到，拿到不会走着条路。
         U.putOrderedObject(p, MATCH, null);
         p.item = null;
         p.hash = h;
