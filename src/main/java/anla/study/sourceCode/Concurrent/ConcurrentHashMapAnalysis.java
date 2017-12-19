@@ -1,4 +1,4 @@
-package anla.study.sourceCode.Collection;
+package anla.study.sourceCode.Concurrent;
 
 import java.io.ObjectStreamField;
 import java.io.Serializable;
@@ -79,6 +79,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * The default concurrency level for this table. Unused but
      * defined for compatibility with previous versions of this class.
+     * 
+     * 默认的冲突水平
      */
     private static final int DEFAULT_CONCURRENCY_LEVEL = 16;
 
@@ -88,6 +90,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * actual floating point value isn't normally used -- it is
      * simpler to use expressions such as {@code n - (n >>> 2)} for
      * the associated resizing threshold.
+     * 
+     * 默认的加载因子。
      */
     private static final float LOAD_FACTOR = 0.75f;
 
@@ -98,6 +102,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * than 2, and should be at least 8 to mesh with assumptions in
      * tree removal about conversion back to plain bins upon
      * shrinkage.
+     * 
+     * 超过这个度就会编程红黑树存储。
+     * 8
      */
     static final int TREEIFY_THRESHOLD = 8;
 
@@ -105,6 +112,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * The bin count threshold for untreeifying a (split) bin during a
      * resize operation. Should be less than TREEIFY_THRESHOLD, and at
      * most 6 to mesh with shrinkage detection under removal.
+     * 
+     * 低于6就会转化为链表存储。
+     * 6
      */
     static final int UNTREEIFY_THRESHOLD = 6;
 
@@ -113,6 +123,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * (Otherwise the table is resized if too many nodes in a bin.)
      * The value should be at least 4 * TREEIFY_THRESHOLD to avoid
      * conflicts between resizing and treeification thresholds.
+     * 
+     * 当链表冲突的节点树化时候，最小的容量
+     * 64
      */
     static final int MIN_TREEIFY_CAPACITY = 64;
 
@@ -122,23 +135,36 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * serves as a lower bound to avoid resizers encountering
      * excessive memory contention.  The value should be at least
      * DEFAULT_CAPACITY.
+     * 
+     * 当表进行转化时候，最小的量
+     * 
+     * 16
      */
     private static final int MIN_TRANSFER_STRIDE = 16;
 
     /**
      * The number of bits used for generation stamp in sizeCtl.
      * Must be at least 6 for 32bit arrays.
+     * 
+     * 位数用来作为标记。
      */
     private static int RESIZE_STAMP_BITS = 16;
 
     /**
      * The maximum number of threads that can help resize.
      * Must fit in 32 - RESIZE_STAMP_BITS bits.
+     * 
+     * 线程能够帮助resize的最大数量。
+     * 
+     * 1<<16  -1
+     * 65534
      */
     private static final int MAX_RESIZERS = (1 << (32 - RESIZE_STAMP_BITS)) - 1;
 
     /**
      * The bit shift for recording size stamp in sizeCtl.
+     * 当记录size的标记时候的，位移动。
+     * 16
      */
     private static final int RESIZE_STAMP_SHIFT = 32 - RESIZE_STAMP_BITS;
 
@@ -148,12 +174,19 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     static final int MOVED     = -1; // hash for forwarding nodes
     static final int TREEBIN   = -2; // hash for roots of trees
     static final int RESERVED  = -3; // hash for transient reservations
+    /**
+     * 低位31个1
+     */
     static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 
-    /** Number of CPUS, to place bounds on some sizings */
+    /** Number of CPUS, to place bounds on some sizings
+     * cpu个数
+     *  */
     static final int NCPU = Runtime.getRuntime().availableProcessors();
 
-    /** For serialization compatibility. */
+    /** For serialization compatibility. 
+     * 序列化
+     * */
     private static final ObjectStreamField[] serialPersistentFields = {
         new ObjectStreamField("segments", Segment[].class),
         new ObjectStreamField("segmentMask", Integer.TYPE),
@@ -169,6 +202,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * in bulk tasks.  Subclasses of Node with a negative hash field
      * are special, and contain null keys and values (but are never
      * exported).  Otherwise, keys and vals are never null.
+     * 
+     * node节点，键值对，用于保存值。
      */
     static class Node<K,V> implements Map.Entry<K,V> {
         final int hash;
@@ -191,6 +226,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             throw new UnsupportedOperationException();
         }
 
+        /**
+         * 比较方法。
+         * k==key或者k.equals(key)
+         */
         public final boolean equals(Object o) {
             Object k, v, u; Map.Entry<?,?> e;
             return ((o instanceof Map.Entry) &&
@@ -202,6 +241,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
         /**
          * Virtualized support for map.get(); overridden in subclasses.
+         * 利用h值，去寻找value为k的。
+         * 循环遍历去找。
          */
         Node<K,V> find(int h, Object k) {
             Node<K,V> e = this;
@@ -234,6 +275,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * cheapest possible way to reduce systematic lossage, as well as
      * to incorporate impact of the highest bits that would otherwise
      * never be used in index calculations because of table bounds.
+     * 
+     * 异或方法，用于发散h的值。
      */
     static final int spread(int h) {
         return (h ^ (h >>> 16)) & HASH_BITS;
@@ -242,6 +285,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Returns a power of two table size for the given desired capacity.
      * See Hackers Delight, sec 3.2
+     * 
+     * 
+     * 给一个c用于，获取值，为2的倍数。
      */
     private static final int tableSizeFor(int c) {
         int n = c - 1;
@@ -256,6 +302,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Returns x's Class if it is of the form "class C implements
      * Comparable<C>", else null.
+     * 
+     * 判断给定的x是不是，可比较的，即是不是继承子comparable的。
+     * 为string也可以
      */
     static Class<?> comparableClassFor(Object x) {
         if (x instanceof Comparable) {
@@ -279,6 +328,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Returns k.compareTo(x) if x matches kc (k's screened comparable
      * class), else 0.
+     * 
+     * 判断x和k的比较结果。
      */
     @SuppressWarnings({"rawtypes","unchecked"}) // for cast to Comparable
     static int compareComparables(Class<?> kc, Object k, Object x) {
@@ -304,16 +355,37 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * writes to be conservative.
      */
 
+    /**
+     * 获取tab的第i个值。
+     * @param tab
+     * @param i
+     * @return
+     */
     @SuppressWarnings("unchecked")
     static final <K,V> Node<K,V> tabAt(Node<K,V>[] tab, int i) {
         return (Node<K,V>)U.getObjectVolatile(tab, ((long)i << ASHIFT) + ABASE);
     }
 
+    /**
+     * 在tab的第i个位置，用v去替代它。
+     * @param tab
+     * @param i
+     * @param c
+     * @param v
+     * @return
+     */
     static final <K,V> boolean casTabAt(Node<K,V>[] tab, int i,
                                         Node<K,V> c, Node<K,V> v) {
         return U.compareAndSwapObject(tab, ((long)i << ASHIFT) + ABASE, c, v);
     }
 
+    /**
+     * 在tab的i的位置把v放进去
+     * 
+     * @param tab
+     * @param i
+     * @param v
+     */
     static final <K,V> void setTabAt(Node<K,V>[] tab, int i, Node<K,V> v) {
         U.putObjectVolatile(tab, ((long)i << ASHIFT) + ABASE, v);
     }
@@ -323,11 +395,15 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
+     * 
+     * table数组
      */
     transient volatile Node<K,V>[] table;
 
     /**
      * The next table to use; non-null only while resizing.
+     * 
+     * 用于保存resize的Node数组引用。
      */
     private transient volatile Node<K,V>[] nextTable;
 
@@ -335,6 +411,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * Base counter value, used mainly when there is no contention,
      * but also as a fallback during table initialization
      * races. Updated via CAS.
+     * 
+     * 主要是用在没有竞争的时候，也用在table初始化时候。
      */
     private transient volatile long baseCount;
 
@@ -345,21 +423,34 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * when table is null, holds the initial table size to use upon
      * creation, or 0 for default. After initialization, holds the
      * next element count value upon which to resize the table.
+     * 
+     * 控制size的，用于数组table初始化或者变化大小的control。
+     * 当为负数时候，在initialized或者resized
+     * -1为初始化
+     * <-1，则是几个线程在进行resize操作。
+     * 
+     * 当table为null时候，为0.
      */
     private transient volatile int sizeCtl;
 
     /**
      * The next table index (plus one) to split while resizing.
+     * 
+     * 当resizing时候，下一个index分割
      */
     private transient volatile int transferIndex;
 
     /**
      * Spinlock (locked via CAS) used when resizing and/or creating CounterCells.
+     * 
+     * 当resizing或者create cell时候，的spinlock值。
      */
     private transient volatile int cellsBusy;
 
     /**
      * Table of counter cells. When non-null, size is a power of 2.
+     * 
+     * counter cells的值，当不为null时候，大小为2的倍数。
      */
     private transient volatile CounterCell[] counterCells;
 
@@ -373,6 +464,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * Creates a new, empty map with the default initial table size (16).
+     * 默认构造方法
      */
     public ConcurrentHashMap() {
     }
@@ -386,6 +478,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * sizing to accommodate this many elements.
      * @throws IllegalArgumentException if the initial capacity of
      * elements is negative
+     * 
+     * 指定初始化大小的构造方法。
      */
     public ConcurrentHashMap(int initialCapacity) {
         if (initialCapacity < 0)
@@ -400,6 +494,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * Creates a new map with the same mappings as the given map.
      *
      * @param m the map
+     * 
+     * 从map m中构造一个hashmap。
      */
     public ConcurrentHashMap(Map<? extends K, ? extends V> m) {
         this.sizeCtl = DEFAULT_CAPACITY;
@@ -631,6 +727,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * keys currently in the specified map.
      *
      * @param m mappings to be stored in this map
+     * 
+     * 把map m里面东西，都放进去。
+     * 也就是调用putVal方法。
      */
     public void putAll(Map<? extends K, ? extends V> m) {
         tryPresize(m.size());
@@ -1766,6 +1865,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Returns the stamp bits for resizing a table of size n.
      * Must be negative when shifted left by RESIZE_STAMP_SHIFT.
+     * 
+     * 或运算。
+     * 
      */
     static final int resizeStamp(int n) {
         return Integer.numberOfLeadingZeros(n) | (1 << (RESIZE_STAMP_BITS - 1));
@@ -1872,31 +1974,41 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * Tries to presize table to accommodate the given number of elements.
      *
      * @param size number of elements (doesn't need to be perfectly accurate)
+     * 
+     * 看看size够不够
      */
     private final void tryPresize(int size) {
+    	//通过和maxmum对比，确定size应该的大小。
         int c = (size >= (MAXIMUM_CAPACITY >>> 1)) ? MAXIMUM_CAPACITY :
             tableSizeFor(size + (size >>> 1) + 1);
         int sc;
         while ((sc = sizeCtl) >= 0) {
-            Node<K,V>[] tab = table; int n;
+        	//sizeCtl>0时候
+            Node<K,V>[] tab = table; int n;    //获取最开始的table。
             if (tab == null || (n = tab.length) == 0) {
-                n = (sc > c) ? sc : c;
+            	//初始化情况
+                n = (sc > c) ? sc : c;     //二者取大
                 if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+                	//把sizeCtrl换为-1,说明正在初始化操作。
                     try {
                         if (table == tab) {
                             @SuppressWarnings("unchecked")
-                            Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
-                            table = nt;
-                            sc = n - (n >>> 2);
+                            Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];   //初始化
+                            table = nt;      //初始化后的
+                            sc = n - (n >>> 2);    //把sc赋值为n的一半。
                         }
                     } finally {
+                    	//把sc赋值给sizeCtl
                         sizeCtl = sc;
                     }
                 }
             }
             else if (c <= sc || n >= MAXIMUM_CAPACITY)
+            	//出错了
                 break;
             else if (tab == table) {
+            	//有值。
+            	
                 int rs = resizeStamp(n);
                 if (sc < 0) {
                     Node<K,V>[] nt;
