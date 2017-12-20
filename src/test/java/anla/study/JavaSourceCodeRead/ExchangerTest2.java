@@ -15,11 +15,9 @@ public class ExchangerTest2 {
 	static class ExchangerProducer implements Runnable {
 		private Exchanger<Integer> exchanger;
 		private static int data = 1;
-
 		ExchangerProducer(Exchanger<Integer> exchanger) {
 			this.exchanger = exchanger;
 		}
-
 		public void run() {
 			try {
 				data = 1;
@@ -36,11 +34,9 @@ public class ExchangerTest2 {
 	static class ExchangerConsumer implements Runnable {
 		private Exchanger<Integer> exchanger;
 		private static int data = 0;
-
 		ExchangerConsumer(Exchanger<Integer> exchanger) {
 			this.exchanger = exchanger;
 		}
-
 		public void run() {
 			data = 0;
 			System.out.println("consumer before : " + data);
@@ -50,18 +46,13 @@ public class ExchangerTest2 {
 				e.printStackTrace();
 			}
 			System.out.println("consumer after : " + data);
-
 		}
 	}
 
-	/**
-	 * @param args
-	 */
 	public static void main(String[] args) {
 		ExecutorService exec = Executors.newCachedThreadPool();
 		Exchanger<Integer> exchanger = new Exchanger<Integer>();
 		new Thread(new ExchangerConsumer(exchanger)).start();
 		new Thread(new ExchangerProducer(exchanger)).start();
-
 	}
 }

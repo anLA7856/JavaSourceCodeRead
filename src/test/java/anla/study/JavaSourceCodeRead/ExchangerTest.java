@@ -1,29 +1,20 @@
 package anla.study.JavaSourceCodeRead;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.Exchanger;
-import java.util.concurrent.TimeUnit;
 
 public class ExchangerTest {
 
 	static class Producer implements Runnable {
-
-		// 生产者、消费者交换的数据结构
-		private List<String> buffer;
-
-		// 步生产者和消费者的交换对象
-		private Exchanger<List<String>> exchanger;
-
-		Producer(List<String> buffer, Exchanger<List<String>> exchanger) {
+		private String buffer;
+		private Exchanger<String> exchanger;
+		Producer(String buffer, Exchanger<String> exchanger) {
 			this.buffer = buffer;
 			this.exchanger = exchanger;
 		}
-
 		public void run() {
 			for (int i = 1; i < 5; i++) {
 				try {
-					System.out.println("生产者第" + i + "次提供");
+					System.out.println("生产者第" + i + "次生产");
 					exchanger.exchange(buffer);
 				} catch (InterruptedException e) {
 					e.printStackTrace();
@@ -33,40 +24,33 @@ public class ExchangerTest {
 	}
 
 	static class Consumer implements Runnable {
-		private List<String> buffer;
-
-		private final Exchanger<List<String>> exchanger;
-
-		public Consumer(List<String> buffer, Exchanger<List<String>> exchanger) {
+		private String buffer;
+		private final Exchanger<String> exchanger;
+		public Consumer(String buffer, Exchanger<String> exchanger) {
 			this.buffer = buffer;
 			this.exchanger = exchanger;
 		}
-
 		public void run() {
 			for (int i = 1; i < 5; i++) {
 				// 调用exchange()与消费者进行数据交换
 				try {
 					buffer = exchanger.exchange(buffer);
-					System.out.println("消费者第" + i + "次提取");
+					System.out.println("消费者第" + i + "次消费");
 				} catch (InterruptedException e) {
 					e.printStackTrace();
 				}
-
 			}
 		}
 	}
 
 	public static void main(String[] args) throws Exception {
-		List<String> buffer1 = new ArrayList<String>();
-		List<String> buffer2 = new ArrayList<String>();
-
-		Exchanger<List<String>> exchanger = new Exchanger<List<String>>();
-
+		String buffer1 = new String();
+		String buffer2 = new String();
+		Exchanger<String> exchanger = new Exchanger<String>();
 		Thread producerThread = new Thread(new Producer(buffer1, exchanger));
 		Thread consumerThread = new Thread(new Consumer(buffer2, exchanger));
 
 		producerThread.start();
-
 		consumerThread.start();
 	}
 }
