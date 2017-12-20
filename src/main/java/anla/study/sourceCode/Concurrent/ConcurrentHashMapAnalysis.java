@@ -18,6 +18,7 @@ import java.util.Set;
 import java.util.Spliterator;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
@@ -516,6 +517,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * elements is negative or the load factor is nonpositive
      *
      * @since 1.6
+     * 
+     * 定义初始的capacity容量，以及loadFactor去生成。
      */
     public ConcurrentHashMap(int initialCapacity, float loadFactor) {
         this(initialCapacity, loadFactor, 1);
@@ -538,6 +541,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @throws IllegalArgumentException if the initial capacity is
      * negative or the load factor or concurrencyLevel are
      * nonpositive
+     * 
+     * 相对于上一个，增加了concurrencylevel的并发水平。
      */
     public ConcurrentHashMap(int initialCapacity,
                              float loadFactor, int concurrencyLevel) {
@@ -555,6 +560,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * {@inheritDoc}
+     * 
+     * 返回counterCells的总数值。
      */
     public int size() {
         long n = sumCount();
@@ -565,6 +572,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * {@inheritDoc}
+     * 
+     * 判断是否为集合是否为空。
      */
     public boolean isEmpty() {
         return sumCount() <= 0L; // ignore transient negative values
@@ -2174,6 +2183,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         CounterCell(long x) { value = x; }
     }
 
+    /**
+     * 返回counterCells的总数值。
+     * @return
+     */
     final long sumCount() {
         CounterCell[] as = counterCells; CounterCell a;
         long sum = baseCount;
@@ -2187,39 +2200,59 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     }
 
     // See LongAdder version for explanation
+    /**
+     * 
+     * @param x
+     * @param wasUncontended
+     * 
+     * x表示要放入的值，放入COunterCell的值。
+     * 
+     * 记得和LongAdder对比。
+     */
     private final void fullAddCount(long x, boolean wasUncontended) {
         int h;
         if ((h = ThreadLocalRandom.getProbe()) == 0) {
-            ThreadLocalRandom.localInit();      // force initialization
+        	//返回probe值，判断是否初始化了，为0说明还没有初始化。
+            ThreadLocalRandom.localInit();      // force initialization   
+            //记录h和wasUncontended。
             h = ThreadLocalRandom.getProbe();
             wasUncontended = true;
         }
-        boolean collide = false;                // True if last slot nonempty
+        boolean collide = false;                // True if last slot nonempty   当最后非空，为true
         for (;;) {
+        	//自旋
             CounterCell[] as; CounterCell a; int n; long v;
+            //cellBusy不为0
             if ((as = counterCells) != null && (n = as.length) > 0) {
                 if ((a = as[(n - 1) & h]) == null) {
-                    if (cellsBusy == 0) {            // Try to attach new Cell
+                	//这个位置为null
+                    if (cellsBusy == 0) {            // Try to attach new Cell   尽力去初始化一个新的cell。
                         CounterCell r = new CounterCell(x); // Optimistic create
                         if (cellsBusy == 0 &&
                             U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+                        	//站位成功，那么进行rs的替换。
                             boolean created = false;
                             try {               // Recheck under lock
                                 CounterCell[] rs; int m, j;
                                 if ((rs = counterCells) != null &&
                                     (m = rs.length) > 0 &&
                                     rs[j = (m - 1) & h] == null) {
+                                	
+                                	//counterCells不为null，并且rs[j]==null，最完美情况，那么就把位置占了。
                                     rs[j] = r;
                                     created = true;
                                 }
                             } finally {
+                            	//最后把cellsBusy设为0，就相当于释放了锁。
                                 cellsBusy = 0;
                             }
                             if (created)
+                            	//说明在上一步，占坑成功了，那么直接退出自旋。
                                 break;
                             continue;           // Slot is now non-empty
                         }
                     }
+                    //不冲突。
                     collide = false;
                 }
                 else if (!wasUncontended)       // CAS already known to fail
@@ -2233,6 +2266,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                 else if (cellsBusy == 0 &&
                          U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
                     try {
+                    	
+                    	//再尝试一次占坑。
                         if (counterCells == as) {// Expand table unless stale
                             CounterCell[] rs = new CounterCell[n << 1];
                             for (int i = 0; i < n; ++i)
@@ -2245,12 +2280,15 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                     collide = false;
                     continue;                   // Retry with expanded table
                 }
+                //重新生成一个给当前thread生成一个probe
                 h = ThreadLocalRandom.advanceProbe(h);
             }
             else if (cellsBusy == 0 && counterCells == as &&
                      U.compareAndSwapInt(this, CELLSBUSY, 0, 1)) {
+            	//获取锁
                 boolean init = false;
                 try {                           // Initialize table
+                	//初始化table。
                     if (counterCells == as) {
                         CounterCell[] rs = new CounterCell[2];
                         rs[h & 1] = new CounterCell(x);
@@ -2258,12 +2296,14 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                         init = true;
                     }
                 } finally {
+                	//释放锁
                     cellsBusy = 0;
                 }
                 if (init)
                     break;
             }
             else if (U.compareAndSwapLong(this, BASECOUNT, v = baseCount, v + x))
+            	//把basecount增加x
                 break;                          // Fall back on using base
         }
     }
