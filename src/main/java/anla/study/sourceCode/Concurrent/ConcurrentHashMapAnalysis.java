@@ -589,18 +589,24 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@code null}.  (There can be at most one such mapping.)
      *
      * @throws NullPointerException if the specified key is null
+     * 
+     * 通过key，来获取v的方法。 key不能为null
      */
     public V get(Object key) {
         Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
         int h = spread(key.hashCode());
         if ((tab = table) != null && (n = tab.length) > 0 &&
             (e = tabAt(tab, (n - 1) & h)) != null) {
+        	//通过(n-1)&h 算法，发现这里有值。
             if ((eh = e.hash) == h) {
                 if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                	//就是这个
                     return e.val;
             }
             else if (eh < 0)
+            	//eh小于0，那么就通过next去找，也就是链表方式。
                 return (p = e.find(h, key)) != null ? p.val : null;
+            //正常eh>0时候，通过next去找。
             while ((e = e.next) != null) {
                 if (e.hash == h &&
                     ((ek = e.key) == key || (ek != null && key.equals(ek))))
@@ -618,6 +624,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *         is a key in this table, as determined by the
      *         {@code equals} method; {@code false} otherwise
      * @throws NullPointerException if the specified key is null
+     * 
+     * 判断是否包含key
      */
     public boolean containsKey(Object key) {
         return get(key) != null;
@@ -632,6 +640,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return {@code true} if this map maps one or more keys to the
      *         specified value
      * @throws NullPointerException if the specified value is null
+     * 
+     * 判断是否包含值。不为null。
+     * 
+     * 用了Traverser。利用构造Traverser去寻找。
      */
     public boolean containsValue(Object value) {
         if (value == null)
@@ -2994,15 +3006,17 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * paranoically cope with potential sharing by users of iterators
      * across threads, iteration terminates if a bounds checks fails
      * for a table read.
+     * 
+     * 给containsValue或iterators或者spliterators提供服务。
      */
     static class Traverser<K,V> {
-        Node<K,V>[] tab;        // current table; updated if resized
-        Node<K,V> next;         // the next entry to use
-        TableStack<K,V> stack, spare; // to save/restore on ForwardingNodes
-        int index;              // index of bin to use next
-        int baseIndex;          // current index of initial table
-        int baseLimit;          // index bound for initial table
-        final int baseSize;     // initial table size
+        Node<K,V>[] tab;        // current table; updated if resized    //接受父类的table
+        Node<K,V> next;         // the next entry to use    //下一个node的引用
+        TableStack<K,V> stack, spare; // to save/restore on ForwardingNodes   保存Forwarding Nodes
+        int index;              // index of bin to use next     bin的索引
+        int baseIndex;          // current index of initial table    当前的基础index
+        int baseLimit;          // index bound for initial table     当前的基础边界
+        final int baseSize;     // initial table size     当前的基础大小。
 
         Traverser(Node<K,V>[] tab, int size, int index, int limit) {
             this.tab = tab;
@@ -3014,25 +3028,35 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
         /**
          * Advances if possible, returning next valid node, or null if none.
+         * 
+         * 返回下一个node节点。
          */
         final Node<K,V> advance() {
             Node<K,V> e;
             if ((e = next) != null)
+            	//当前遍历节点的下一个节点不为null。
                 e = e.next;
             for (;;) {
+            	//自旋操作。
                 Node<K,V>[] t; int i, n;  // must use locals in checks
                 if (e != null)
+                	//如果它的下一个next不为null，那么就返回，因为找的就是它。
                     return next = e;
                 if (baseIndex >= baseLimit || (t = tab) == null ||
                     (n = t.length) <= (i = index) || i < 0)
+                	//在本范围内查找，超过限度了，那么就返回null。
                     return next = null;
                 if ((e = tabAt(t, i)) != null && e.hash < 0) {
+                	//定位到当前节点e，如果e的类型是ForwardingNode，
                     if (e instanceof ForwardingNode) {
+                    	//把tab重新指向nextTable
                         tab = ((ForwardingNode<K,V>)e).nextTable;
                         e = null;
+                        //一旦要新建，保存状态。
                         pushState(t, i, n);
                         continue;
                     }
+                    //e是二叉树，那么把e指向头节点。
                     else if (e instanceof TreeBin)
                         e = ((TreeBin<K,V>)e).first;
                     else
@@ -3041,15 +3065,17 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                 if (stack != null)
                     recoverState(n);
                 else if ((index = i + baseSize) >= n)
-                    index = ++baseIndex; // visit upper slots if present
+                    index = ++baseIndex; // visit upper slots if present    //index大于n了，那么把index设置为baseIndex+1;
             }
         }
 
         /**
          * Saves traversal state upon encountering a forwarding node.
+         * 
+         * 当遇到一个forwarding node节点的时候，保存状态。
          */
         private void pushState(Node<K,V>[] t, int i, int n) {
-            TableStack<K,V> s = spare;  // reuse if possible
+            TableStack<K,V> s = spare;  // reuse if possible   用于保存状态。
             if (s != null)
                 spare = s.next;
             else
@@ -3065,10 +3091,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
          * Possibly pops traversal state.
          *
          * @param n length of current table
+         * 
+         * 恢复state，也就是poptraversal state 出栈。
          */
         private void recoverState(int n) {
             TableStack<K,V> s; int len;
             while ((s = stack) != null && (index += (len = s.length)) >= n) {
+            	//不为null，并且没有越界。
                 n = len;
                 index = s.index;
                 tab = s.tab;
@@ -3086,10 +3115,15 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Base of key, value, and entry Iterators. Adds fields to
      * Traverser to support iterator.remove.
+     * 
+     * 基础的iterator，用于key，value，和entry。
      */
     static class BaseIterator<K,V> extends Traverser<K,V> {
-        final ConcurrentHashMap<K,V> map;
+        //获取当前一个引用。
+    	final ConcurrentHashMap<K,V> map;
+        
         Node<K,V> lastReturned;
+        //构造方法
         BaseIterator(Node<K,V>[] tab, int size, int index, int limit,
                     ConcurrentHashMap<K,V> map) {
             super(tab, size, index, limit);
@@ -3109,6 +3143,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         }
     }
 
+    /**
+     * key的iterator。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     */
     static final class KeyIterator<K,V> extends BaseIterator<K,V>
         implements Iterator<K>, Enumeration<K> {
         KeyIterator(Node<K,V>[] tab, int index, int size, int limit,
@@ -3116,12 +3157,18 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             super(tab, index, size, limit, map);
         }
 
+        /**
+         * 返回下一个。
+         */
         public final K next() {
             Node<K,V> p;
+            //到尾了。
             if ((p = next) == null)
                 throw new NoSuchElementException();
             K k = p.key;
+            //修改lastReturned
             lastReturned = p;
+            //往下面走一个。
             advance();
             return k;
         }
@@ -3129,6 +3176,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         public final K nextElement() { return next(); }
     }
 
+    /**
+     * value的iterator。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     */
     static final class ValueIterator<K,V> extends BaseIterator<K,V>
         implements Iterator<V>, Enumeration<V> {
         ValueIterator(Node<K,V>[] tab, int index, int size, int limit,
@@ -3149,6 +3203,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         public final V nextElement() { return next(); }
     }
 
+    /**
+     * entry的iterator。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     */
     static final class EntryIterator<K,V> extends BaseIterator<K,V>
         implements Iterator<Map.Entry<K,V>> {
         EntryIterator(Node<K,V>[] tab, int index, int size, int limit,
@@ -3170,6 +3231,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * Exported Entry for EntryIterator
+     * 
+     * 供EntryIterator输出。也就是主要操作返回的entry，可以用的keyvalue
+     * 等。
      */
     static final class MapEntry<K,V> implements Map.Entry<K,V> {
         final K key; // non-null
@@ -3211,6 +3275,16 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         }
     }
 
+    
+    /**
+     * key的spliterator。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     * 
+     * 分割迭代器
+     */
     static final class KeySpliterator<K,V> extends Traverser<K,V>
         implements Spliterator<K> {
         long est;               // size estimate
@@ -3222,17 +3296,25 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
         public Spliterator<K> trySplit() {
             int i, f, h;
+            
+            //大小减半
             return (h = ((i = baseIndex) + (f = baseLimit)) >>> 1) <= i ? null :
                 new KeySpliterator<K,V>(tab, baseSize, baseLimit = h,
                                         f, est >>>= 1);
         }
 
+        /**
+         * 通过advance方法。
+         */
         public void forEachRemaining(Consumer<? super K> action) {
             if (action == null) throw new NullPointerException();
             for (Node<K,V> p; (p = advance()) != null;)
                 action.accept(p.key);
         }
 
+        /**
+         * 通过advance方法来获得下一个节点。遍历
+         */
         public boolean tryAdvance(Consumer<? super K> action) {
             if (action == null) throw new NullPointerException();
             Node<K,V> p;
@@ -3244,12 +3326,22 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
         public long estimateSize() { return est; }
 
+        /**
+         * 有一下三个特征
+         */
         public int characteristics() {
             return Spliterator.DISTINCT | Spliterator.CONCURRENT |
                 Spliterator.NONNULL;
         }
     }
 
+    /**
+     * value的分割迭代器。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     */
     static final class ValueSpliterator<K,V> extends Traverser<K,V>
         implements Spliterator<V> {
         long est;               // size estimate
@@ -3288,6 +3380,17 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         }
     }
 
+    
+    /**
+     * entry的分割迭代器。
+     * @author anla7856
+     *
+     * @param <K>
+     * @param <V>
+     * 
+     * 
+     * 注意利用map来输出。
+     */
     static final class EntrySpliterator<K,V> extends Traverser<K,V>
         implements Spliterator<Map.Entry<K,V>> {
         final ConcurrentHashMap<K,V> map; // To export MapEntry
@@ -3330,7 +3433,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     }
 
     // Parallel bulk operations
-
+    //并发的大块操作。	
     /**
      * Computes initial batch value for bulk tasks. The returned value
      * is approximately exp2 of the number of times (minus one) to
@@ -3338,9 +3441,14 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * faster to compute and more convenient to use as a guide to
      * splitting than is the depth, since it is used while dividing by
      * two anyway.
+     * 
+     * 计算任务的初始值，比计算深度块，
+     * 
+     * 批处理。
      */
     final int batchFor(long b) {
         long n;
+        //满足一下三种则返回0.
         if (b == Long.MAX_VALUE || (n = sumCount()) <= 1L || n < b)
             return 0;
         int sp = ForkJoinPool.getCommonPoolParallelism() << 2; // slack of 4
@@ -3354,6 +3462,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * needed for this operation to be executed in parallel
      * @param action the action
      * @since 1.8
+     * 
+     * 给每个key，value一个，这样的动作
      */
     public void forEach(long parallelismThreshold,
                         BiConsumer<? super K,? super V> action) {
@@ -3375,6 +3485,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param action the action
      * @param <U> the return type of the transformer
      * @since 1.8
+     * 
+     * 给每个kv，三元操作，返回结果放到v里面。
      */
     public <U> void forEach(long parallelismThreshold,
                             BiFunction<? super K, ? super V, ? extends U> transformer,
@@ -3401,6 +3513,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return a non-null result from applying the given search
      * function on each (key, value), or null if none
      * @since 1.8
+     * 
+     * 遍历情况下。
+     * 返回，满足特定搜索函数的结果u
      */
     public <U> U search(long parallelismThreshold,
                         BiFunction<? super K, ? super V, ? extends U> searchFunction) {
