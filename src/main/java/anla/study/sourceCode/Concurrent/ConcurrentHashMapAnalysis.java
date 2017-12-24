@@ -672,44 +672,56 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the previous value associated with {@code key}, or
      *         {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key or value is null
+     * 
+     * 将k，v加入进来。
      */
     public V put(K key, V value) {
         return putVal(key, value, false);
     }
 
-    /** Implementation for put and putIfAbsent */
+    /** Implementation for put and putIfAbsent
+     * 将kv，加入进去。
+     *  */
     final V putVal(K key, V value, boolean onlyIfAbsent) {
-        if (key == null || value == null) throw new NullPointerException();
-        int hash = spread(key.hashCode());
-        int binCount = 0;
+        if (key == null || value == null) throw new NullPointerException();    //kv，不能为null。
+        int hash = spread(key.hashCode());    //通过key，执行spread方法，获得hash值。
+        int binCount = 0;                    //用来标识是用哪种方法存储，冲突链表或者二叉树
         for (Node<K,V>[] tab = table;;) {
             Node<K,V> f; int n, i, fh;
             if (tab == null || (n = tab.length) == 0)
+            	//如果tab为null，就初始化。
                 tab = initTable();
-            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
-                if (casTabAt(tab, i, null,
-                             new Node<K,V>(hash, key, value, null)))
-                    break;                   // no lock when adding to empty bin
+            else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {   //表已经初始化，但是特定位置为null，说明没人占坑。
+                if (casTabAt(tab, i, null,new Node<K,V>(hash, key, value, null)))
+                	//cas方法，把一个新的node插入到tab里面，并且next为null。成功就退出循环
+                    break;                   
             }
             else if ((fh = f.hash) == MOVED)
+            	//如果这个位置的hash值是MOVED，也就是-1;帮助它扩容。
                 tab = helpTransfer(tab, f);
             else {
+            	//另外一种情况，有竞争。，用synchronized，给tab[i]这个节点加锁。
                 V oldVal = null;
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
-                        if (fh >= 0) {
+                    	//再次验证下，这个位置这个节点是不是f。
+                        if (fh >= 0) {             //表示对链表操作。
                             binCount = 1;
-                            for (Node<K,V> e = f;; ++binCount) {
+                            for (Node<K,V> e = f;; ++binCount) {     //依次往下寻找
+                            	//自旋状态，用e存储f
                                 K ek;
                                 if (e.hash == hash &&
                                     ((ek = e.key) == key ||
                                      (ek != null && key.equals(ek)))) {
+                                	//key小艾嗯等，那么就是替换
                                     oldVal = e.val;
                                     if (!onlyIfAbsent)
+                                    	//如果允许相等就提换的话，那么就替换。
                                         e.val = value;
                                     break;
                                 }
                                 Node<K,V> pred = e;
+                                //把e换为e.next，那么就是往后面节点插一个。
                                 if ((e = e.next) == null) {
                                     pred.next = new Node<K,V>(hash, key,
                                                               value, null);
@@ -717,11 +729,14 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                                 }
                             }
                         }
+                        //说明是二叉树节点状态
                         else if (f instanceof TreeBin) {
+                        	//看f是不是二叉树状态。
                             Node<K,V> p;
                             binCount = 2;
                             if ((p = ((TreeBin<K,V>)f).putTreeVal(hash, key,
                                                            value)) != null) {
+                            	//转化为TreeBin后，插入二叉树节点。
                                 oldVal = p.val;
                                 if (!onlyIfAbsent)
                                     p.val = value;
@@ -731,6 +746,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                 }
                 if (binCount != 0) {
                     if (binCount >= TREEIFY_THRESHOLD)
+                    	//检测是否需要把链表转化为二叉树操作。
                         treeifyBin(tab, i);
                     if (oldVal != null)
                         return oldVal;
@@ -738,6 +754,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                 }
             }
         }
+        //总数+1
         addCount(1L, binCount);
         return null;
     }
@@ -766,6 +783,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the previous value associated with {@code key}, or
      *         {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key is null
+     * 
+     * 删除某一个key，也就是用replaceNode方法。
      */
     public V remove(Object key) {
         return replaceNode(key, null, null);
@@ -775,59 +794,72 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * Implementation for the four public remove/replace methods:
      * Replaces node value with v, conditional upon match of cv if
      * non-null.  If resulting value is null, delete.
+     * 
+     * 替换操作有点类似于cas里面的替换。
      */
     final V replaceNode(Object key, V value, Object cv) {
-        int hash = spread(key.hashCode());
+        int hash = spread(key.hashCode());     //获取hash值。
         for (Node<K,V>[] tab = table;;) {
             Node<K,V> f; int n, i, fh;
             if (tab == null || (n = tab.length) == 0 ||
                 (f = tabAt(tab, i = (n - 1) & hash)) == null)
+            	//位置为空，cas方法放入。
                 break;
-            else if ((fh = f.hash) == MOVED)
+            else if ((fh = f.hash) == MOVED)    //如果状态是moved，那么就帮助扩容。
                 tab = helpTransfer(tab, f);
             else {
-                V oldVal = null;
+                V oldVal = null;   //旧值。
                 boolean validated = false;
                 synchronized (f) {
+                	//锁住tab[i]节点。
                     if (tabAt(tab, i) == f) {
                         if (fh >= 0) {
+                        	//如果fh>=0，那么就验证成功了。
                             validated = true;
                             for (Node<K,V> e = f, pred = null;;) {
+                            	
                                 K ek;
                                 if (e.hash == hash &&
                                     ((ek = e.key) == key ||
                                      (ek != null && key.equals(ek)))) {
+                                	//判断这个位置的key，和给出的key是否相等。
                                     V ev = e.val;
                                     if (cv == null || cv == ev ||
                                         (ev != null && cv.equals(ev))) {
-                                        oldVal = ev;
-                                        if (value != null)
+                                    	//找到了。
+                                        oldVal = ev;    //保存旧值
+                                        if (value != null)    //如果给出的value不为null。
                                             e.val = value;
-                                        else if (pred != null)
+                                        else if (pred != null)    //如果pre不为null，就把pred指向当前节点的next。
                                             pred.next = e.next;
                                         else
                                             setTabAt(tab, i, e.next);
                                     }
                                     break;
                                 }
+                                //不是这个，那么就往下找。
                                 pred = e;
                                 if ((e = e.next) == null)
                                     break;
                             }
                         }
+                        //fh小于0,那么判断f是不是二叉树节点。
                         else if (f instanceof TreeBin) {
-                            validated = true;
+                            validated = true;         //把validated设为true。
                             TreeBin<K,V> t = (TreeBin<K,V>)f;
                             TreeNode<K,V> r, p;
                             if ((r = t.root) != null &&
                                 (p = r.findTreeNode(hash, key, null)) != null) {
+                            	//找到了这个节点
                                 V pv = p.val;
                                 if (cv == null || cv == pv ||
                                     (pv != null && cv.equals(pv))) {
+                                	//再验证一遍。
                                     oldVal = pv;
                                     if (value != null)
                                         p.val = value;
                                     else if (t.removeTreeNode(p))
+                                    	//删除这个节点。
                                         setTabAt(tab, i, untreeify(t.first));
                                 }
                             }
@@ -849,6 +881,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * Removes all of the mappings from this map.
+     * 删除所有节点。
+     * 一个一个删除加锁删除。
      */
     public void clear() {
         long delta = 0L; // negative number of deletions
@@ -857,15 +891,17 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         while (tab != null && i < tab.length) {
             int fh;
             Node<K,V> f = tabAt(tab, i);
-            if (f == null)
+            if (f == null)     //如果此时f为null。i++,下一个
                 ++i;
-            else if ((fh = f.hash) == MOVED) {
+            else if ((fh = f.hash) == MOVED) {    //moved状态，扩容状态，所以i=0;重新开始
                 tab = helpTransfer(tab, f);
                 i = 0; // restart
             }
             else {
+            	//否则，锁着这个f节点，进行接下来操作
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
+                    	//判断fh的状态，从而赋值给
                         Node<K,V> p = (fh >= 0 ? f :
                                        (f instanceof TreeBin) ?
                                        ((TreeBin<K,V>)f).first : null);
@@ -873,6 +909,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                             --delta;
                             p = p.next;
                         }
+                        //cas方法设置tab的值。
                         setTabAt(tab, i++, null);
                     }
                 }
@@ -899,6 +936,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@link Spliterator#DISTINCT}, and {@link Spliterator#NONNULL}.
      *
      * @return the set view
+     * 
+     * set的view
      */
     public KeySetView<K,V> keySet() {
         KeySetView<K,V> ks;
@@ -922,6 +961,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * and {@link Spliterator#NONNULL}.
      *
      * @return the collection view
+     * 
+     * 
+     * colleation的view。
      */
     public Collection<V> values() {
         ValuesView<K,V> vs;
@@ -944,6 +986,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@link Spliterator#DISTINCT}, and {@link Spliterator#NONNULL}.
      *
      * @return the set view
+     * 
+     * set的view。并且是entry类型的。
      */
     public Set<Map.Entry<K,V>> entrySet() {
         EntrySetView<K,V> es;
@@ -956,6 +1000,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@code key.hashCode() ^ value.hashCode()}.
      *
      * @return the hash code value for this map
+     * 
+     * 计算hash值。concurrenthashmap的hash值。
      */
     public int hashCode() {
         int h = 0;
@@ -978,6 +1024,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * associated value.
      *
      * @return a string representation of this map
+     * 
+     * tostring方法
      */
     public String toString() {
         Node<K,V>[] t;
@@ -1010,6 +1058,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *
      * @param o object to be compared for equality with this map
      * @return {@code true} if the specified object is equal to this map
+     * 
+     * equals方法
+     * 
+     * concurrentHashMap的equals方法。
      */
     public boolean equals(Object o) {
         if (o != this) {
@@ -1018,6 +1070,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             Map<?,?> m = (Map<?,?>) o;
             Node<K,V>[] t;
             int f = (t = table) == null ? 0 : t.length;
+            //每一个都比较一遍。
             Traverser<K,V> it = new Traverser<K,V>(t, f, 0, f);
             for (Node<K,V> p; (p = it.advance()) != null; ) {
                 V val = p.val;
@@ -1040,6 +1093,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Stripped-down version of helper class used in previous version,
      * declared for the sake of serialization compatibility
+     * 
+     * 就得实现原理，利用segment块锁，继承子ReentrantLock实现。
      */
     static class Segment<K,V> extends ReentrantLock implements Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
@@ -1056,6 +1111,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * the key (Object) and value (Object)
      * for each key-value mapping, followed by a null pair.
      * The key-value mappings are emitted in no particular order.
+     * 
+     * 序列化方法。
      */
     private void writeObject(java.io.ObjectOutputStream s)
         throws java.io.IOException {
@@ -1098,6 +1155,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @throws ClassNotFoundException if the class of a serialized object
      *         could not be found
      * @throws java.io.IOException if an I/O error occurs
+     * 
+     * 从流里面读取的方法。
      */
     private void readObject(java.io.ObjectInputStream s)
         throws java.io.IOException, ClassNotFoundException {
@@ -1204,6 +1263,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the previous value associated with the specified key,
      *         or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
+     * 
+     * put方法，当不存在才会可以，否则将put不成功。
      */
     public V putIfAbsent(K key, V value) {
         return putVal(key, value, true);
@@ -1213,6 +1274,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@inheritDoc}
      *
      * @throws NullPointerException if the specified key is null
+     * 
+     * remove方法。
      */
     public boolean remove(Object key, Object value) {
         if (key == null)
@@ -1224,6 +1287,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@inheritDoc}
      *
      * @throws NullPointerException if any of the arguments are null
+     * 
+     * replace方法。
      */
     public boolean replace(K key, V oldValue, V newValue) {
         if (key == null || oldValue == null || newValue == null)
@@ -1237,6 +1302,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the previous value associated with the specified key,
      *         or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
+     * 
+     * 
+     * 强行替换。
      */
     public V replace(K key, V value) {
         if (key == null || value == null)
@@ -1256,12 +1324,18 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * no mapping for the given key
      * @return the mapping for the key, if present; else the default value
      * @throws NullPointerException if the specified key is null
+     * 
+     * 如果这个key这里没有这个值，那么就返回defaultValue。
      */
     public V getOrDefault(Object key, V defaultValue) {
         V v;
         return (v = get(key)) == null ? defaultValue : v;
     }
 
+    
+    /**
+     * java8新出现的foreach方法。
+     */
     public void forEach(BiConsumer<? super K, ? super V> action) {
         if (action == null) throw new NullPointerException();
         Node<K,V>[] t;
@@ -1273,6 +1347,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
         }
     }
 
+    /**
+     * 替换所有，新值就是oldValue经过function计算过后的newValue。
+     */
     public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
         if (function == null) throw new NullPointerException();
         Node<K,V>[] t;
@@ -1313,6 +1390,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *         otherwise never complete
      * @throws RuntimeException or Error if the mappingFunction does so,
      *         in which case the mapping is left unestablished
+     *         
+     *         
+     * 如果当前给定的key还没有绑定一个值，那么使用mappingFunction方法，去计算一个只，
+     * 也有插入操作，所有要加锁。
      */
     public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
         if (key == null || mappingFunction == null)
@@ -1325,6 +1406,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
             else if ((f = tabAt(tab, i = (n - 1) & h)) == null) {
+            	//如果这个位置每人，也就是直接插入到数组里面。
                 Node<K,V> r = new ReservationNode<K,V>();
                 synchronized (r) {
                     if (casTabAt(tab, i, null, r)) {
@@ -1341,9 +1423,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                 if (binCount != 0)
                     break;
             }
-            else if ((fh = f.hash) == MOVED)
+            else if ((fh = f.hash) == MOVED)   //需要扩容
                 tab = helpTransfer(tab, f);
             else {
+            	//这个位置有人，那么就插入到链表尾端。
                 boolean added = false;
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
@@ -1367,6 +1450,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                                 }
                             }
                         }
+                        //二叉树形式的插入。
                         else if (f instanceof TreeBin) {
                             binCount = 2;
                             TreeBin<K,V> t = (TreeBin<K,V>)f;
@@ -1414,6 +1498,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *         otherwise never complete
      * @throws RuntimeException or Error if the remappingFunction does so,
      *         in which case the mapping is unchanged
+     *         
+     * 类似于上一个方法，但是remappingFunction不同
      */
     public V computeIfPresent(K key, BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
         if (key == null || remappingFunction == null)
@@ -1504,6 +1590,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *         otherwise never complete
      * @throws RuntimeException or Error if the remappingFunction does so,
      *         in which case the mapping is unchanged
+     *         
+     *         
+     * 方法思想和上面的差不多。
      */
     public V compute(K key,
                      BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
@@ -1736,6 +1825,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *         determined by the {@code equals} method;
      *         {@code false} otherwise
      * @throws NullPointerException if the specified value is null
+     * 
+     * 判断是否包含
      */
     public boolean contains(Object value) {
         return containsValue(value);
@@ -1746,6 +1837,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *
      * @return an enumeration of the keys in this table
      * @see #keySet()
+     * 
+     * 返回keys的枚举类型。
      */
     public Enumeration<K> keys() {
         Node<K,V>[] t;
@@ -1758,6 +1851,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *
      * @return an enumeration of the values in this table
      * @see #values()
+     * 
+     * 返回value的枚举类型
      */
     public Enumeration<V> elements() {
         Node<K,V>[] t;
@@ -1776,6 +1871,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *
      * @return the number of mappings
      * @since 1.8
+     * 
+     * 
+     * 返回mapings的数量。
+     * 
+     * 最好用这个方法去替代size。
+     * 
+     * 是一个估计的值。
      */
     public long mappingCount() {
         long n = sumCount();
@@ -1789,6 +1891,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param <K> the element type of the returned set
      * @return the new set
      * @since 1.8
+     * 
+     * 返回一个set
      */
     public static <K> KeySetView<K,Boolean> newKeySet() {
         return new KeySetView<K,Boolean>
@@ -1806,6 +1910,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @throws IllegalArgumentException if the initial capacity of
      * elements is negative
      * @since 1.8
+     * 
+     * 返回keysetview。
      */
     public static <K> KeySetView<K,Boolean> newKeySet(int initialCapacity) {
         return new KeySetView<K,Boolean>
@@ -1822,6 +1928,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param mappedValue the mapped value to use for any additions
      * @return the set view
      * @throws NullPointerException if the mappedValue is null
+     * 
+     * 
      */
     public KeySetView<K,V> keySet(V mappedValue) {
         if (mappedValue == null)
@@ -1833,6 +1941,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * A node inserted at head of bins during transfer operations.
+     * 
+     * 一个结点，在转化操作（transfer）操作。插入前一个节点的类。
+     * 只有find操作。
      */
     static final class ForwardingNode<K,V> extends Node<K,V> {
         final Node<K,V>[] nextTable;
@@ -1870,6 +1981,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * A place-holder node used in computeIfAbsent and compute
+     * 
+     * 在compute方法时候，作为一个占位这，（place-holder）
      */
     static final class ReservationNode<K,V> extends Node<K,V> {
         ReservationNode() {
@@ -1896,22 +2009,28 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * Initializes table, using the size recorded in sizeCtl.
+     * 
+     * 初始化表的方法。
      */
     private final Node<K,V>[] initTable() {
         Node<K,V>[] tab; int sc;
         while ((tab = table) == null || tab.length == 0) {
+        	//只有当表还尚未初始化的时候，
             if ((sc = sizeCtl) < 0)
+            	//sizeCtl<0，说明正在初始化或者扩容，那就先休眠，自旋等一会。
                 Thread.yield(); // lost initialization race; just spin
             else if (U.compareAndSwapInt(this, SIZECTL, sc, -1)) {
+            	//成功把sizeCtl设为-1,即告诉别人正在扩容
                 try {
                     if ((tab = table) == null || tab.length == 0) {
-                        int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
+                        int n = (sc > 0) ? sc : DEFAULT_CAPACITY;      //设置容量
                         @SuppressWarnings("unchecked")
-                        Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
-                        table = tab = nt;
-                        sc = n - (n >>> 2);
+                        Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];     //初始化n大小数组。
+                        table = tab = nt;                               //把其复制给table。
+                        sc = n - (n >>> 2);                  //sc为n的一半。
                     }
                 } finally {
+                	//重新复制给sizeCtl。
                     sizeCtl = sc;
                 }
                 break;
@@ -1929,36 +2048,44 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      *
      * @param x the count to add
      * @param check if <0, don't check resize, if <= 1 only check if uncontended
+     * 
+     * add操作，如果table太小，或者还没有初始化，那么先去初始化。
+     * x是前面的bitCount的值。
+     * 
      */
     private final void addCount(long x, int check) {
         CounterCell[] as; long b, s;
         if ((as = counterCells) != null ||
             !U.compareAndSwapLong(this, BASECOUNT, b = baseCount, s = b + x)) {
+        	//counterCells不为null时候，或者，当counterCells为null，并且将baseCount设置为baseCount+x失败。说明并发了
             CounterCell a; long v; int m;
             boolean uncontended = true;
             if (as == null || (m = as.length - 1) < 0 ||
                 (a = as[ThreadLocalRandom.getProbe() & m]) == null ||
-                !(uncontended =
-                  U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
-                fullAddCount(x, uncontended);
+                !(uncontended = U.compareAndSwapLong(a, CELLVALUE, v = a.value, v + x))) {
+            	//as不为null，并且CAS替换cellValue失败，就增加当前替换节点的CounterCell的value值
+                fullAddCount(x, uncontended);             
                 return;
             }
             if (check <= 1)
                 return;
-            s = sumCount();
+            s = sumCount();    //否则，s=sumCount()
         }
+        //counterCells不为null，
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                    (n = tab.length) < MAXIMUM_CAPACITY) {
-                int rs = resizeStamp(n);
+            	//需要扩容
+                int rs = resizeStamp(n);     //对n进行或运算
                 if (sc < 0) {
                     if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                         sc == rs + MAX_RESIZERS || (nt = nextTable) == null ||
                         transferIndex <= 0)
                         break;
                     if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1))
-                        transfer(tab, nt);
+                    	 //更改sizeCtl，进行扩容。别人已经开始了，则我同时共享这个nextTable一起扩。
+                        transfer(tab, nt);         
                 }
                 else if (U.compareAndSwapInt(this, SIZECTL, sc,
                                              (rs << RESIZE_STAMP_SHIFT) + 2))
@@ -1970,18 +2097,23 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
     /**
      * Helps transfer if a resize is in progress.
+     * 
+     * 如果需要扩容，则调helpTransfer去改变。
      */
     final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
         Node<K,V>[] nextTab; int sc;
+        //tab不为null，并且传进来这个f正在扩容，next不为null。
         if (tab != null && (f instanceof ForwardingNode) &&
             (nextTab = ((ForwardingNode<K,V>)f).nextTable) != null) {
-            int rs = resizeStamp(tab.length);
+            int rs = resizeStamp(tab.length);     //或运算获得rs
             while (nextTab == nextTable && table == tab &&
                    (sc = sizeCtl) < 0) {
                 if ((sc >>> RESIZE_STAMP_SHIFT) != rs || sc == rs + 1 ||
                     sc == rs + MAX_RESIZERS || transferIndex <= 0)
+                	//扩容完成了。
                     break;
                 if (U.compareAndSwapInt(this, SIZECTL, sc, sc + 1)) {
+                	//当前线程扩容大军。
                     transfer(tab, nextTab);
                     break;
                 }
@@ -2050,15 +2182,17 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /**
      * Moves and/or copies the nodes in each bin to new table. See
      * above for explanation.
+     * 
+     * 把tab里面东西，都移到nextTable里面。
      */
     private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
         int n = tab.length, stride;
         if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
-            stride = MIN_TRANSFER_STRIDE; // subdivide range
-        if (nextTab == null) {            // initiating
+            stride = MIN_TRANSFER_STRIDE; // 
+        if (nextTab == null) {            // 初始化操作。
             try {
                 @SuppressWarnings("unchecked")
-                Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
+                Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];    //构造一个nextTable对象 它的容量是原来的两倍
                 nextTab = nt;
             } catch (Throwable ex) {      // try to cope with OOME
                 sizeCtl = Integer.MAX_VALUE;
@@ -2068,12 +2202,12 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             transferIndex = n;
         }
         int nextn = nextTab.length;
-        ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
-        boolean advance = true;
-        boolean finishing = false; // to ensure sweep before committing nextTab
+        ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);   ////构造一个连节点指针 用于标志位
+        boolean advance = true;    //并发扩容的关键属性 如果等于true 说明这个节点已经处理过
+        boolean finishing = false; // 判断是否完全完成。
         for (int i = 0, bound = 0;;) {
             Node<K,V> f; int fh;
-            while (advance) {
+            while (advance) {       //这个while循环体的作用就是在控制i--  通过i--可以依次遍历原hash表中的节点
                 int nextIndex, nextBound;
                 if (--i >= bound || finishing)
                     advance = false;
@@ -2092,12 +2226,13 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             }
             if (i < 0 || i >= n || i + n >= nextn) {
                 int sc;
-                if (finishing) {
+                if (finishing) {    //如果所有的节点都已经完成复制工作  就把nextTable赋值给table
                     nextTable = null;
                     table = nextTab;
-                    sizeCtl = (n << 1) - (n >>> 1);
+                    sizeCtl = (n << 1) - (n >>> 1);      ////扩容阈值设置为原来容量的1.5倍  依然相当于现在容量的0.75倍
                     return;
                 }
+              //利用CAS方法更新这个扩容阈值，在这里面sizectl值减一，说明新加入一个线程参与到扩容操作
                 if (U.compareAndSwapInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
                     if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                         return;
@@ -2105,15 +2240,18 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                     i = n; // recheck before commit
                 }
             }
+          //如果遍历到的节点为空 则放入ForwardingNode指针
             else if ((f = tabAt(tab, i)) == null)
                 advance = casTabAt(tab, i, null, fwd);
+            ////如果遍历到ForwardingNode节点  说明这个点已经被处理过了 直接跳过，所以这就是能够并发的扩容！
             else if ((fh = f.hash) == MOVED)
                 advance = true; // already processed
             else {
-                synchronized (f) {
+                synchronized (f) {     //节点上锁
                     if (tabAt(tab, i) == f) {
                         Node<K,V> ln, hn;
-                        if (fh >= 0) {
+                        if (fh >= 0) {    //链表节点。
+                        	 //以下的部分在完成的工作是构造两个链表  一个是原链表  另一个是原链表的反序排列
                             int runBit = fh & n;
                             Node<K,V> lastRun = f;
                             for (Node<K,V> p = f.next; p != null; p = p.next) {
@@ -2138,16 +2276,18 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                                 else
                                     hn = new Node<K,V>(ph, pk, pv, hn);
                             }
-                            setTabAt(nextTab, i, ln);
-                            setTabAt(nextTab, i + n, hn);
-                            setTabAt(tab, i, fwd);
-                            advance = true;
+                            setTabAt(nextTab, i, ln);        //在nextTable的i位置上插入一个链表
+                            setTabAt(nextTab, i + n, hn);    //在nextTable的i+n的位置上插入另一个链表
+                            setTabAt(tab, i, fwd);           //在table的i位置上插入forwardNode节点  表示已经处理过该节点
+                            advance = true;                //设置advance为true 返回到上面的while循环中 就可以执行i--操作
                         }
+                        //二叉树节点。
                         else if (f instanceof TreeBin) {
                             TreeBin<K,V> t = (TreeBin<K,V>)f;
                             TreeNode<K,V> lo = null, loTail = null;
                             TreeNode<K,V> hi = null, hiTail = null;
                             int lc = 0, hc = 0;
+                            //构造正序和反序两个链表
                             for (Node<K,V> e = t.first; e != null; e = e.next) {
                                 int h = e.hash;
                                 TreeNode<K,V> p = new TreeNode<K,V>
@@ -2169,6 +2309,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                                     ++hc;
                                 }
                             }
+                            //检验是否需要转化为链表进行存储。
                             ln = (lc <= UNTREEIFY_THRESHOLD) ? untreeify(lo) :
                                 (hc != 0) ? new TreeBin<K,V>(lo) : t;
                             hn = (hc <= UNTREEIFY_THRESHOLD) ? untreeify(hi) :
@@ -3540,6 +3681,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all (key, value) pairs
      * @since 1.8
+     * 
+     * 返回结果，给定的transformer和reducer函数之后
+     * mapreduce任务。
      */
     public <U> U reduce(long parallelismThreshold,
                         BiFunction<? super K, ? super V, ? extends U> transformer,
@@ -3564,6 +3708,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param reducer a commutative associative combining function
      * @return the result of accumulating the given transformation
      * of all (key, value) pairs
+     * 
+     * 给定basis去，的transformer函数和reducer函数。
      * @since 1.8
      */
     public double reduceToDouble(long parallelismThreshold,
@@ -3591,6 +3737,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all (key, value) pairs
      * @since 1.8
+     * 
+     * Long类型的reduce版本
      */
     public long reduceToLong(long parallelismThreshold,
                              ToLongBiFunction<? super K, ? super V> transformer,
@@ -3617,6 +3765,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all (key, value) pairs
      * @since 1.8
+     * 
+     * reducetoint版本
+     * 
      */
     public int reduceToInt(long parallelismThreshold,
                            ToIntBiFunction<? super K, ? super V> transformer,
@@ -3636,6 +3787,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * needed for this operation to be executed in parallel
      * @param action the action
      * @since 1.8
+     * 
+     * 为每个key，一个特定的action。
      */
     public void forEachKey(long parallelismThreshold,
                            Consumer<? super K> action) {
@@ -3657,6 +3810,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param action the action
      * @param <U> the return type of the transformer
      * @since 1.8
+     * 
+     * 
+     * 给每个key，两个动作，transformer转化后，再执行action。
      */
     public <U> void forEachKey(long parallelismThreshold,
                                Function<? super K, ? extends U> transformer,
@@ -3683,6 +3839,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return a non-null result from applying the given search
      * function on each key, or null if none
      * @since 1.8
+     * 
+     * 给定特定的search方法，然后返回特定的结果。
      */
     public <U> U searchKeys(long parallelismThreshold,
                             Function<? super K, ? extends U> searchFunction) {
@@ -3702,6 +3860,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating all keys using the given
      * reducer to combine values, or null if none
      * @since 1.8
+     * 
+     * 返回，所有key经过reducer之后的值。
      */
     public K reduceKeys(long parallelismThreshold,
                         BiFunction<? super K, ? super K, ? extends K> reducer) {
@@ -3726,6 +3886,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all keys
      * @since 1.8
+     * 
+     * 返回所有keys经过reducer和transformer之后的值。
      */
     public <U> U reduceKeys(long parallelismThreshold,
                             Function<? super K, ? extends U> transformer,
@@ -3751,6 +3913,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all keys
      * @since 1.8
+     * 
+     * 
+     * 所有keys，todouble
      */
     public double reduceKeysToDouble(long parallelismThreshold,
                                      ToDoubleFunction<? super K> transformer,
@@ -3777,6 +3942,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all keys
      * @since 1.8
+     * 
+     * 所有keys，to int。
      */
     public long reduceKeysToLong(long parallelismThreshold,
                                  ToLongFunction<? super K> transformer,
@@ -3803,6 +3970,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return the result of accumulating the given transformation
      * of all keys
      * @since 1.8
+     * 
+     * reducer方法，to int。
      */
     public int reduceKeysToInt(long parallelismThreshold,
                                ToIntFunction<? super K> transformer,
@@ -3822,6 +3991,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * needed for this operation to be executed in parallel
      * @param action the action
      * @since 1.8
+     * 
+     * 每一个value，执行action方法。
      */
     public void forEachValue(long parallelismThreshold,
                              Consumer<? super V> action) {
@@ -3844,6 +4015,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param action the action
      * @param <U> the return type of the transformer
      * @since 1.8
+     * 
+     * transformer和action，执行value
+     * 
      */
     public <U> void forEachValue(long parallelismThreshold,
                                  Function<? super V, ? extends U> transformer,
@@ -3870,6 +4044,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @return a non-null result from applying the given search
      * function on each value, or null if none
      * @since 1.8
+     * 
+     * search方法，相对于value来说的。
      */
     public <U> U searchValues(long parallelismThreshold,
                               Function<? super V, ? extends U> searchFunction) {
@@ -3888,6 +4064,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * @param reducer a commutative associative combining function
      * @return the result of accumulating all values
      * @since 1.8
+     * 
+     * 对于value的reducer方法。
      */
     public V reduceValues(long parallelismThreshold,
                           BiFunction<? super V, ? super V, ? extends V> reducer) {
@@ -4008,6 +4186,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * needed for this operation to be executed in parallel
      * @param action the action
      * @since 1.8
+     * 
+     * 一下对entry的操作。
      */
     public void forEachEntry(long parallelismThreshold,
                              Consumer<? super Map.Entry<K,V>> action) {
@@ -4189,7 +4369,10 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
     /* ----------------Views -------------- */
 
     /**
-     * Base class for views.
+     * Base class for views.，基础的一些view，比如转化z
+     * 
+     * e是对应的集合操作。代表着k，v两个。
+     * 里面调用的都是map的方法
      */
     abstract static class CollectionView<K,V,E>
         implements Collection<E>, java.io.Serializable {
@@ -4228,6 +4411,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
 
         private static final String oomeMsg = "Required array size too large";
 
+        /**
+         * map转化为array
+         */
         public final Object[] toArray() {
             long sz = map.mappingCount();
             if (sz > MAX_ARRAY_SIZE)
@@ -4243,6 +4429,7 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
                         n = MAX_ARRAY_SIZE;
                     else
                         n += (n >>> 1) + 1;
+                    //小了注意复制。
                     r = Arrays.copyOf(r, n);
                 }
                 r[i++] = e;
@@ -4307,6 +4494,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             return sb.append(']').toString();
         }
 
+        /**
+         * 判断是否包含所有
+         */
         public final boolean containsAll(Collection<?> c) {
             if (c != this) {
                 for (Object e : c) {
@@ -4317,6 +4507,9 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
             return true;
         }
 
+        /**
+         * 删除所有
+         */
         public final boolean removeAll(Collection<?> c) {
             if (c == null) throw new NullPointerException();
             boolean modified = false;
@@ -4353,6 +4546,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * {@link #newKeySet(int) newKeySet(int)}.
      *
      * @since 1.8
+     * 
+     * set的view
      */
     public static class KeySetView<K,V> extends CollectionView<K,V,K>
         implements Set<K>, java.io.Serializable {
@@ -4476,6 +4671,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * A view of a ConcurrentHashMap as a {@link Collection} of
      * values, in which additions are disabled. This class cannot be
      * directly instantiated. See {@link #values()}.
+     * 
+     * value的view。
      */
     static final class ValuesView<K,V> extends CollectionView<K,V,V>
         implements Collection<V>, java.io.Serializable {
@@ -4534,6 +4731,8 @@ public class ConcurrentHashMapAnalysis<K,V> extends AbstractMap<K,V>
      * A view of a ConcurrentHashMap as a {@link Set} of (key, value)
      * entries.  This class cannot be directly instantiated. See
      * {@link #entrySet()}.
+     * 
+     * entry的view
      */
     static final class EntrySetView<K,V> extends CollectionView<K,V,Map.Entry<K,V>>
         implements Set<Map.Entry<K,V>>, java.io.Serializable {
