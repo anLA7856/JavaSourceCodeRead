@@ -9,6 +9,7 @@ import java.util.NoSuchElementException;
 import java.util.Queue;
 import java.util.Spliterator;
 import java.util.Spliterators;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
 /**
@@ -115,8 +116,18 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * optimization.
      */
 
+    /**
+     * node节点。
+     * @author anla7856
+     *
+     * 主要方法都是cas方法
+     * @param <E>
+     */
     private static class Node<E> {
         volatile E item;
+        /**
+         * 单向的。
+         */
         volatile Node<E> next;
 
         /**
@@ -130,7 +141,10 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
         boolean casItem(E cmp, E val) {
             return UNSAFE.compareAndSwapObject(this, itemOffset, cmp, val);
         }
-
+        /**
+         * 不允许重排序的set。
+         * @param val
+         */
         void lazySetNext(Node<E> val) {
             UNSAFE.putOrderedObject(this, nextOffset, val);
         }
@@ -170,6 +184,10 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * - head.item may or may not be null.
      * - it is permitted for tail to lag behind head, that is, for tail
      *   to not be reachable from head!
+     *   
+     *   头节点
+     *   head ！=null
+     *   但是head.item可以为null
      */
     private transient volatile Node<E> head;
 
@@ -184,11 +202,18 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * - it is permitted for tail to lag behind head, that is, for tail
      *   to not be reachable from head!
      * - tail.next may or may not be self-pointing to tail.
+     * 
+     * 尾节点。
+     * 
+     * tail！=null
+     * 但是tail.item可以为null。
      */
     private transient volatile Node<E> tail;
 
     /**
      * Creates a {@code ConcurrentLinkedQueue} that is initially empty.
+     * 
+     * 构造方法
      */
     public ConcurrentLinkedQueue() {
         head = tail = new Node<E>(null);
@@ -202,6 +227,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * @param c the collection of elements to initially contain
      * @throws NullPointerException if the specified collection or any
      *         of its elements are null
+     *         
+     *         从一个集合c里面获取
      */
     public ConcurrentLinkedQueue(Collection<? extends E> c) {
         Node<E> h = null, t = null;
@@ -209,8 +236,10 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
             checkNotNull(e);
             Node<E> newNode = new Node<E>(e);
             if (h == null)
+            	//初始化
                 h = t = newNode;
             else {
+            	//t始终指向最后的newNode。
                 t.lazySetNext(newNode);
                 t = newNode;
             }
@@ -230,6 +259,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      *
      * @return {@code true} (as specified by {@link Collection#add})
      * @throws NullPointerException if the specified element is null
+     * 
+     * 添加一个节点。
      */
     public boolean add(E e) {
         return offer(e);
@@ -238,6 +269,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
     /**
      * Tries to CAS head to p. If successful, repoint old head to itself
      * as sentinel for succ(), below.
+     * 
+     * 替换头节点。
      */
     final void updateHead(Node<E> h, Node<E> p) {
         if (h != p && casHead(h, p))
@@ -248,6 +281,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * Returns the successor of p, or the head node if p.next has been
      * linked to self, which will only be true if traversing with a
      * stale pointer that is now off the list.
+     * 
+     * 获得p的下一个节点。
      */
     final Node<E> succ(Node<E> p) {
         Node<E> next = p.next;
@@ -260,26 +295,33 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      *
      * @return {@code true} (as specified by {@link Queue#offer})
      * @throws NullPointerException if the specified element is null
+     * 
+     * 插入节点。
+     * 
+     * 永远只会返回true。 可能会抛出nullPointerException。
      */
     public boolean offer(E e) {
+    	//检查是否为null
         checkNotNull(e);
+        //实例化一个node
         final Node<E> newNode = new Node<E>(e);
 
-        for (Node<E> t = tail, p = t;;) {
+        for (Node<E> t = tail, p = t;;) {//自旋式，直到成功        	
             Node<E> q = p.next;
-            if (q == null) {
+            if (q == null) {   //q为null，则p是最后一个节点，tail指向了最后一个节点。
                 // p is last node
-                if (p.casNext(null, newNode)) {
+                if (p.casNext(null, newNode)) {        //尝试在p后面插入newNode。
                     // Successful CAS is the linearization point
                     // for e to become an element of this queue,
                     // and for newNode to become "live".
-                    if (p != t) // hop two nodes at a time
-                        casTail(t, newNode);  // Failure is OK.
+                    if (p != t) // hop two nodes at a time    //检测p是不是tail，不是的话，更换tail节点。
+                        casTail(t, newNode);  // Failure is OK.   //被别的节点抢先也没有关系，最终目的达成。
                     return true;
                 }
+                //插入失败，肯定就是被其他线程插入成功了。但是自己的一定要成功才能返回。
                 // Lost CAS race to another thread; re-read next
             }
-            else if (p == q)
+            else if (p == q)    //被人抢先了，tail已经改变了，所以p也要改变。如果在比较时候，仍然被人抢先，那就调到head。
                 // We have fallen off list.  If tail is unchanged, it
                 // will also be off-list, in which case we need to
                 // jump to head, from which all live nodes are always
@@ -292,19 +334,20 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
     }
 
     public E poll() {
+    	//重新循环以便。
         restartFromHead:
         for (;;) {
             for (Node<E> h = head, p = h, q;;) {
                 E item = p.item;
 
-                if (item != null && p.casItem(item, null)) {
+                if (item != null && p.casItem(item, null)) {    //因为要弹出head，所以把这里的item设为null。
                     // Successful CAS is the linearization point
                     // for item to be removed from this queue.
-                    if (p != h) // hop two nodes at a time
-                        updateHead(h, ((q = p.next) != null) ? q : p);
+                    if (p != h) // hop two nodes at a time      
+                        updateHead(h, ((q = p.next) != null) ? q : p);   //替换头节点。
                     return item;
                 }
-                else if ((q = p.next) == null) {
+                else if ((q = p.next) == null) {    //如果只有一个头节点。
                     updateHead(h, p);
                     return null;
                 }
@@ -320,9 +363,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
         restartFromHead:
         for (;;) {
             for (Node<E> h = head, p = h, q;;) {
-                E item = p.item;
+                E item = p.item;   //获取头节点item。
                 if (item != null || (q = p.next) == null) {
-                    updateHead(h, p);
+                    updateHead(h, p);    //替换头节点成功。
                     return item;
                 }
                 else if (p == q)
@@ -340,6 +383,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * first(), but that would cost an extra volatile read of item,
      * and the need to add a retry loop to deal with the possibility
      * of losing a race to a concurrent poll().
+     * 
+     * 返回整个node。
      */
     Node<E> first() {
         restartFromHead:
@@ -362,6 +407,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * Returns {@code true} if this queue contains no elements.
      *
      * @return {@code true} if this queue contains no elements
+     * 
+     * 
+     * 判断是否为null
      */
     public boolean isEmpty() {
         return first() == null;
@@ -382,6 +430,10 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * applications.
      *
      * @return the number of elements in this queue
+     * 
+     * 
+     * 判断大小，不准确。
+     * 从头到尾。
      */
     public int size() {
         int count = 0;
@@ -400,6 +452,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      *
      * @param o object to be checked for containment in this queue
      * @return {@code true} if this queue contains the specified element
+     * 
+     * 
+     * 判断是否包含o，也是从头到尾遍历。
      */
     public boolean contains(Object o) {
         if (o == null) return false;
@@ -421,23 +476,26 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      *
      * @param o element to be removed from this queue, if present
      * @return {@code true} if this queue changed as a result of the call
+     * 
+     * 
+     * 删除o。
      */
     public boolean remove(Object o) {
         if (o != null) {
             Node<E> next, pred = null;
-            for (Node<E> p = first(); p != null; pred = p, p = next) {
+            for (Node<E> p = first(); p != null; pred = p, p = next) {   //从第一个开始找。
                 boolean removed = false;
                 E item = p.item;
                 if (item != null) {
-                    if (!o.equals(item)) {
+                    if (!o.equals(item)) {   //不相等
                         next = succ(p);
                         continue;
                     }
-                    removed = p.casItem(item, null);
+                    removed = p.casItem(item, null);   //相等。
                 }
 
                 next = succ(p);
-                if (pred != null && next != null) // unlink
+                if (pred != null && next != null) // unlink   断链。
                     pred.casNext(p, next);
                 if (removed)
                     return true;
@@ -457,15 +515,18 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * @throws NullPointerException if the specified collection or any
      *         of its elements are null
      * @throws IllegalArgumentException if the collection is this queue
+     * 
+     * 把c里面所有元素都添加进来。
      */
     public boolean addAll(Collection<? extends E> c) {
         if (c == this)
             // As historically specified in AbstractQueue#addAll
+        	//不能添加本身
             throw new IllegalArgumentException();
 
         // Copy c into a private chain of Nodes
         Node<E> beginningOfTheEnd = null, last = null;
-        for (E e : c) {
+        for (E e : c) {    //一个一个来添加。
             checkNotNull(e);
             Node<E> newNode = new Node<E>(e);
             if (beginningOfTheEnd == null)
@@ -479,14 +540,15 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
             return false;
 
         // Atomically append the chain at the tail of this collection
+        //原子性的更改尾节点。
         for (Node<E> t = tail, p = t;;) {
             Node<E> q = p.next;
             if (q == null) {
-                // p is last node
-                if (p.casNext(null, beginningOfTheEnd)) {
+                // p is last node    p是最后一个节点。
+                if (p.casNext(null, beginningOfTheEnd)) {    //把beginningOfTheEnd赋给p的next。
                     // Successful CAS is the linearization point
                     // for all elements to be added to this queue.
-                    if (!casTail(t, last)) {
+                    if (!casTail(t, last)) {    //把last设为t。
                         // Try a little harder to update tail,
                         // since we may be adding many elements.
                         t = tail;
@@ -521,6 +583,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * APIs.
      *
      * @return an array containing all of the elements in this queue
+     * 
+     * 变为一个Object数组。
      */
     public Object[] toArray() {
         // Use ArrayList to deal with resizing.
@@ -602,6 +666,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
      *
      * @return an iterator over the elements in this queue in proper sequence
+     * 
+     * 返回一个iterator。
      */
     public Iterator<E> iterator() {
         return new Itr();
@@ -610,6 +676,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
     private class Itr implements Iterator<E> {
         /**
          * Next node to return item for.
+         * 
+         * 下一个要返回的node
          */
         private Node<E> nextNode;
 
@@ -618,11 +686,16 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
          * that an element exists in hasNext(), we must return it in
          * the following next() call even if it was in the process of
          * being removed when hasNext() was called.
+         * 
+         * 下一个item。
+         * 
          */
         private E nextItem;
 
         /**
          * Node of the last returned item, to support remove.
+         * 
+         * 最后一个返回的node
          */
         private Node<E> lastRet;
 
@@ -633,22 +706,24 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
         /**
          * Moves to next valid node and returns item to return for
          * next(), or null if no such.
+         * 
+         * 返回当前，并且往后挪一个。
          */
         private E advance() {
             lastRet = nextNode;
-            E x = nextItem;
+            E x = nextItem; //待返回的。
 
             Node<E> pred, p;
-            if (nextNode == null) {
-                p = first();
+            if (nextNode == null) {    //nextNode是最后一个。
+                p = first();  //p从第一个开始重新找
                 pred = null;
             } else {
                 pred = nextNode;
-                p = succ(nextNode);
+                p = succ(nextNode);    //p是最后一个
             }
 
             for (;;) {
-                if (p == null) {
+                if (p == null) {     //p是null。
                     nextNode = null;
                     nextItem = null;
                     return x;
@@ -693,6 +768,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * @throws java.io.IOException if an I/O error occurs
      * @serialData All of the elements (each an {@code E}) in
      * the proper order, followed by a null
+     * 
+     * 序列化方法。
      */
     private void writeObject(java.io.ObjectOutputStream s)
         throws java.io.IOException {
@@ -717,6 +794,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * @throws ClassNotFoundException if the class of a serialized object
      *         could not be found
      * @throws java.io.IOException if an I/O error occurs
+     * 
+     * 
+     * 序列化方法。
      */
     private void readObject(java.io.ObjectInputStream s)
         throws java.io.IOException, ClassNotFoundException {
@@ -741,10 +821,14 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
         tail = t;
     }
 
-    /** A customized variant of Spliterators.IteratorSpliterator */
+    /** A customized variant of Spliterators.IteratorSpliterator 
+     * 
+     * splititerator。分割迭代器。
+     * 
+     * */
     static final class CLQSpliterator<E> implements Spliterator<E> {
         static final int MAX_BATCH = 1 << 25;  // max batch array size;
-        final ConcurrentLinkedQueue<E> queue;
+        final ConcurrentLinkedQueue<E> queue;     //指向当前queue
         Node<E> current;    // current node; null until initialized
         int batch;          // batch size for splits
         boolean exhausted;  // true when no more nodes
@@ -780,6 +864,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
             return null;
         }
 
+        /**
+         * 遍历，并为每一个node完成一件事。
+         */
         public void forEachRemaining(Consumer<? super E> action) {
             Node<E> p;
             if (action == null) throw new NullPointerException();
@@ -797,6 +884,9 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
             }
         }
 
+        /**
+         * 迭代到下一个，并只为下一个做这件事。
+         */
         public boolean tryAdvance(Consumer<? super E> action) {
             Node<E> p;
             if (action == null) throw new NullPointerException();
@@ -819,8 +909,15 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
             return false;
         }
 
+        /**
+         * 估计大小，最大值。
+         */
         public long estimateSize() { return Long.MAX_VALUE; }
 
+        
+        /**
+         * 特性。
+         */
         public int characteristics() {
             return Spliterator.ORDERED | Spliterator.NONNULL |
                 Spliterator.CONCURRENT;
@@ -852,6 +949,8 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
      * Throws NullPointerException if argument is null.
      *
      * @param v the element
+     * 
+     * 空元素检测
      */
     private static void checkNotNull(Object v) {
         if (v == null)
