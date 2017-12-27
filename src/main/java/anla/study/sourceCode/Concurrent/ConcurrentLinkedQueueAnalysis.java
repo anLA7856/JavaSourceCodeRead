@@ -305,55 +305,53 @@ public class ConcurrentLinkedQueueAnalysis<E> extends AbstractQueue<E>
         checkNotNull(e);
         //实例化一个node
         final Node<E> newNode = new Node<E>(e);
-
-        for (Node<E> t = tail, p = t;;) {//自旋式，直到成功        	
+        for (Node<E> t = tail, p = t;;) {//自旋式，直到成功   
+        	//p表示尾节点，默认等于tail节点
             Node<E> q = p.next;
-            if (q == null) {   //q为null，则p是最后一个节点，tail指向了最后一个节点。
-                // p is last node
-                if (p.casNext(null, newNode)) {        //尝试在p后面插入newNode。
-                    // Successful CAS is the linearization point
-                    // for e to become an element of this queue,
-                    // and for newNode to become "live".
-                    if (p != t) // hop two nodes at a time    //检测p是不是tail，不是的话，更换tail节点。
-                        casTail(t, newNode);  // Failure is OK.   //被别的节点抢先也没有关系，最终目的达成。
+            if (q == null) {   //q为null，说明p是最后一个节点，tail指向了最后一个节点。
+                if (p.casNext(null, newNode)) {        //尝试在将newNode设置为p的next节点。
+                    if (p != t)  //检测p是不是tail，不是的话，说明有线程瞬间也成功了，更换tail节点。
+                    	/*被别的节点抢先也没有关系，这里不管有没有把
+                    	newNode设为tail节点，最终会执行下面的return true。
+                    	所以tail可能不是指向最后一个节点。
+                    	*/
+                    	casTail(t, newNode);  
                     return true;
                 }
                 //插入失败，肯定就是被其他线程插入成功了。但是自己的一定要成功才能返回。
-                // Lost CAS race to another thread; re-read next
             }
-            else if (p == q)    //被人抢先了，tail已经改变了，所以p也要改变。如果在比较时候，仍然被人抢先，那就调到head。
-                // We have fallen off list.  If tail is unchanged, it
-                // will also be off-list, in which case we need to
-                // jump to head, from which all live nodes are always
-                // reachable.  Else the new tail is a better bet.
+            else if (p == q)   
+            	//被人抢先了，tail已经改变了，所以p也要改变。如果在比较时候，仍然被人抢先，那就调到head重新走一遍。
                 p = (t != (t = tail)) ? t : head;
             else
-                // Check for tail updates after two hops.
-                p = (p != t && t != (t = tail)) ? t : q;
+            	 //p是t节点，但是实际上tail已经被改变了。
+                p = (p != t && t != (t = tail)) ? t : q;   
         }
     }
 
     public E poll() {
-    	//重新循环以便。
+    	//重新循环一遍。
         restartFromHead:
         for (;;) {
             for (Node<E> h = head, p = h, q;;) {
-                E item = p.item;
+                E item = p.item;   //获取p节点元素。
 
-                if (item != null && p.casItem(item, null)) {    //因为要弹出head，所以把这里的item设为null。
-                    // Successful CAS is the linearization point
-                    // for item to be removed from this queue.
-                    if (p != h) // hop two nodes at a time      
-                        updateHead(h, ((q = p.next) != null) ? q : p);   //替换头节点。
+                if (item != null && p.casItem(item, null)) { //item不为null，所以证明p还没有被弹出。因为要弹出head，所以把这里的item设为null。
+                   //成功了
+                    if (p != h) 
+                        updateHead(h, ((q = p.next) != null) ? q : p);   //决定是用p还是用p.next来替换头节点。
+                    //updateHead允许失败，失败的话，head.item=null，但是head不为null。
                     return item;
                 }
-                else if ((q = p.next) == null) {    //如果只有一个头节点。
+                else if ((q = p.next) == null) {    //如果只有一个头节点。说明队列已经空了。
                     updateHead(h, p);
                     return null;
                 }
                 else if (p == q)
+                	//重来一遍。
                     continue restartFromHead;
                 else
+                	//如果下一个元素不为null，则把下一个元素设为头节点
                     p = q;
             }
         }
