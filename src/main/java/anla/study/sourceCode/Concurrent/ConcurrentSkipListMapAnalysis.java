@@ -312,11 +312,15 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Special value used to identify base-level header
+     * 
+     * 基础头节点。
      */
     private static final Object BASE_HEADER = new Object();
 
     /**
      * The topmost head index of the skiplist.
+     * 
+     * head节点
      */
     private transient volatile HeadIndex<K,V> head;
 
@@ -325,22 +329,36 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * using natural ordering.  (Non-private to simplify access in
      * nested classes.)
      * @serial
+     * 
+     * 比较器。主要用于skiplist的顺序。
      */
     final Comparator<? super K> comparator;
 
-    /** Lazily initialized key set */
+    /** Lazily initialized key set 
+     * key的set
+     * */
     private transient KeySet<K> keySet;
-    /** Lazily initialized entry set */
+    /** Lazily initialized entry set
+     * entry的set
+     *  */
     private transient EntrySet<K,V> entrySet;
-    /** Lazily initialized values collection */
+    /** Lazily initialized values collection 
+     * value集合。
+     * */
     private transient Values<V> values;
-    /** Lazily initialized descending key set */
+    /** Lazily initialized descending key set 
+     * 相反的map集合，估计就是comparator相反。
+     * */
     private transient ConcurrentNavigableMap<K,V> descendingMap;
 
     /**
      * Initializes or resets state. Needed by constructors, clone,
      * clear, readObject. and ConcurrentSkipListSet.clone.
      * (Note that comparator must be separately initialized.)
+     * 
+     * 初始化或者重置状态。会被constructors，clone，clear，readObject，clone方法，
+     * 注意comparator需要分开初始化。
+     * 
      */
     private void initialize() {
         keySet = null;
@@ -353,6 +371,9 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
     /**
      * compareAndSet head node
+     * 
+     * cas头节点。head节点。
+     * HeadIndex标识的。
      */
     private boolean casHead(HeadIndex<K,V> cmp, HeadIndex<K,V> val) {
         return UNSAFE.compareAndSwapObject(this, headOffset, cmp, val);
@@ -366,14 +387,19 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * headed by a dummy node accessible as head.node. The value field
      * is declared only as Object because it takes special non-V
      * values for marker and header nodes.
+     * 
+     * 存放key-value的地方。有“大小顺序”的连接起来。
+     * 
+     * 非空。
      */
     static final class Node<K,V> {
         final K key;
         volatile Object value;
-        volatile Node<K,V> next;
+        volatile Node<K,V> next;    //代表下一个节点。横向下一个节点。
 
         /**
          * Creates a new regular node.
+         * 
          */
         Node(K key, Object value, Node<K,V> next) {
             this.key = key;
@@ -387,6 +413,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * have null keys, a fact that is exploited in a few places,
          * but this doesn't distinguish markers from the base-level
          * header node (head.node), which also has a null key.
+         * 
+         * 创建一个下一个节点。
          */
         Node(Node<K,V> next) {
             this.key = null;
@@ -396,6 +424,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
         /**
          * compareAndSet value field
+         * 
+         * CAS value的值。当前节点的value值。
          */
         boolean casValue(Object cmp, Object val) {
             return UNSAFE.compareAndSwapObject(this, valueOffset, cmp, val);
@@ -416,6 +446,10 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * test if value points to node.
          *
          * @return true if this node is a marker node
+         * 
+         * 判断是否为一个marker。
+         * 
+         * maker就是，value指向自己。
          */
         boolean isMarker() {
             return value == this;
@@ -424,6 +458,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
         /**
          * Returns true if this node is the header of base-level list.
          * @return true if this node is header node
+         * 
+         * value是否为base_header，就是基础level的header节点，右上角。
          */
         boolean isBaseHeader() {
             return value == BASE_HEADER;
@@ -433,6 +469,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * Tries to append a deletion marker to this node.
          * @param f the assumed current successor of this node
          * @return true if successful
+         * 
+         * 把f作为当前节点的next节点。
          */
         boolean appendMarker(Node<K,V> f) {
             return casNext(f, new Node<K,V>(f));
@@ -444,15 +482,21 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * field seen to be null.
          * @param b predecessor
          * @param f successor
+         * 
+         * 帮助删除，
+         * b代表前趋，
+         * f代表后继。
          */
         void helpDelete(Node<K,V> b, Node<K,V> f) {
             /*
              * Rechecking links and then doing only one of the
              * help-out stages per call tends to minimize CAS
              * interference among helping threads.
+             * 
+             * 目的是想删除当前节点。
              */
-            if (f == next && this == b.next) {
-                if (f == null || f.value != f) // not already marked
+            if (f == next && this == b.next) {  //f确实是后继，并且b确实是前趋 
+                if (f == null || f.value != f) // not already marked   还没有被mark。
                     casNext(f, new Node<K,V>(f));
                 else
                     b.casNext(this, f.next);
@@ -467,7 +511,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          */
         V getValidValue() {
             Object v = value;
-            if (v == this || v == BASE_HEADER)
+            if (v == this || v == BASE_HEADER)   //如果v是this，或者v是base_header。
                 return null;
             @SuppressWarnings("unchecked") V vv = (V)v;
             return vv;
@@ -477,6 +521,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * Creates and returns a new SimpleImmutableEntry holding current
          * mapping if this node holds a valid value, else null.
          * @return new entry or null
+         * 
+         * 返回当前map的一个快照k,v集合
          */
         AbstractMap.SimpleImmutableEntry<K,V> createSnapshot() {
             Object v = value;
@@ -489,8 +535,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
         // UNSAFE mechanics
 
         private static final sun.misc.Unsafe UNSAFE;
-        private static final long valueOffset;
-        private static final long nextOffset;
+        private static final long valueOffset;   //value的偏移量
+        private static final long nextOffset;    //next的偏移量。
 
         static {
             try {
@@ -514,11 +560,15 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * fields, they have different types and are handled in different
      * ways, that can't nicely be captured by placing field in a
      * shared abstract class.
+     * 
+     * 
+     * Index的node。
+     * 代表skiplist的层次。
      */
     static class Index<K,V> {
         final Node<K,V> node;
-        final Index<K,V> down;
-        volatile Index<K,V> right;
+        final Index<K,V> down;  //下方节点，
+        volatile Index<K,V> right;   //右侧节点。
 
         /**
          * Creates index node with given values.
@@ -531,6 +581,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
         /**
          * compareAndSet right field
+         * 
+         * cas 右侧right节点。
          */
         final boolean casRight(Index<K,V> cmp, Index<K,V> val) {
             return UNSAFE.compareAndSwapObject(this, rightOffset, cmp, val);
@@ -539,6 +591,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
         /**
          * Returns true if the node this indexes has been deleted.
          * @return true if indexed node is known to be deleted
+         * 
+         * 判断这个indexs节点是否被删除，依据是node.value是否为null。
          */
         final boolean indexesDeletedNode() {
             return node.value == null;
@@ -551,10 +605,13 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * @param succ the expected current successor
          * @param newSucc the new successor
          * @return true if successful
+         * 
+         * 把newSucee来替代succ， CAS方法。
+         * 最终succ并没有丢，而是放到了后面，就像插入了一个节点。
          */
         final boolean link(Index<K,V> succ, Index<K,V> newSucc) {
             Node<K,V> n = node;
-            newSucc.right = succ;
+            newSucc.right = succ;      //newSucc连接succ。
             return n.value != null && casRight(succ, newSucc);
         }
 
@@ -564,6 +621,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
          * is known to be deleted.
          * @param succ the expected current successor
          * @return true if successful
+         * 
+         * cas方法，接触succ节点。
          */
         final boolean unlink(Index<K,V> succ) {
             return node.value != null && casRight(succ, succ.right);
@@ -588,6 +647,9 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Nodes heading each level keep track of their level.
+     * 
+     * HeadIndex节点，里面只有一个值level。
+     * 并且只有一个构造方法。
      */
     static final class HeadIndex<K,V> extends Index<K,V> {
         final int level;
@@ -602,6 +664,9 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
     /**
      * Compares using comparator or natural ordering if null.
      * Called only by methods that have performed required type checks.
+     * 
+     * 用传入的比较器或者默认weinull的比较。
+     * 比较x和y的大小
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     static final int cpr(Comparator c, Object x, Object y) {
@@ -617,29 +682,34 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * rely on this side-effect of clearing indices to deleted nodes.
      * @param key the key
      * @return a predecessor of key
+     * 
+     * 找到在base-level层次的当前链接的上一个节点。否则就返回base-level header。
+     * 
+     * 
      */
     private Node<K,V> findPredecessor(Object key, Comparator<? super K> cmp) {
-        if (key == null)
+        //判断为null
+    	if (key == null)
             throw new NullPointerException(); // don't postpone errors
         for (;;) {
             for (Index<K,V> q = head, r = q.right, d;;) {
-                if (r != null) {
-                    Node<K,V> n = r.node;
-                    K k = n.key;
-                    if (n.value == null) {
-                        if (!q.unlink(r))
-                            break;           // restart
-                        r = q.right;         // reread r
+                if (r != null) {   //r为head下一个节点。
+                    Node<K,V> n = r.node;   //获得r的node
+                    K k = n.key;              //获得n的key。
+                    if (n.value == null) {     //r为无效节点       
+                        if (!q.unlink(r))  
+                            break;           // restart   取消q绑定的r，失败就重新来。
+                        r = q.right;         // reread r    成功的话，就重新r，此时r为q.right.right，也就是删除了原来的r。
                         continue;
                     }
-                    if (cpr(cmp, key, k) > 0) {
-                        q = r;
+                    if (cpr(cmp, key, k) > 0) {   //如果key>k,因为skiplist是有顺序的，所以可以这样比较。
+                        q = r;     //往前走一个
                         r = r.right;
                         continue;
                     }
                 }
                 if ((d = q.down) == null)
-                    return q.node;
+                    return q.node;   //找到了这个节点，down==null。
                 q = d;
                 r = d.right;
             }
@@ -647,6 +717,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
     }
 
     /**
+     * 返回对应node，删除已经删除的节点。
+     * 
      * Returns node holding key or null if no such, clearing out any
      * deleted nodes seen along the way.  Repeatedly traverses at
      * base-level looking for key starting at predecessor returned
@@ -689,24 +761,26 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      *
      * @param key the key
      * @return node holding key, or null if no such
+     * 
+     * 找到某一个key
      */
     private Node<K,V> findNode(Object key) {
         if (key == null)
-            throw new NullPointerException(); // don't postpone errors
-        Comparator<? super K> cmp = comparator;
+            throw new NullPointerException(); // 检查是否为null
+        Comparator<? super K> cmp = comparator;    //获取comparator。
         outer: for (;;) {
-            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {
+            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {  //b是key的predecessor头节点。 n是b后一个节点。
                 Object v; int c;
-                if (n == null)
+                if (n == null)                 //如果n==null，就说明b是最后一个节点，重新来
                     break outer;
-                Node<K,V> f = n.next;
-                if (n != b.next)                // inconsistent read
+                Node<K,V> f = n.next;    //f为n的next。
+                if (n != b.next)                // 不一致的读，说明有人已经改变了状态。inconsistent read
                     break;
-                if ((v = n.value) == null) {    // n is deleted
+                if ((v = n.value) == null) {    // n的value为null，说明n已经被删除了，所以就要帮助删除下。  n is deleted
                     n.helpDelete(b, f);
                     break;
                 }
-                if (b.value == null || v == n)  // b is deleted
+                if (b.value == null || v == n)  // b is deleted   b被删除了。    
                     break;
                 if ((c = cpr(cmp, key, n.key)) == 0)
                     return n;
@@ -725,30 +799,33 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      *
      * @param key the key
      * @return the value, or null if absent
+     * 
+     * 通过key，来获得value。大部分和findNode相似，但是只返回value，
+     * 并且不会尝试去重读。
      */
     private V doGet(Object key) {
-        if (key == null)
-            throw new NullPointerException();
-        Comparator<? super K> cmp = comparator;
+        if (key == null)                 //判断为null
+            throw new NullPointerException();    
+        Comparator<? super K> cmp = comparator;            //获取comparator。
         outer: for (;;) {
-            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {
+            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {       //找到predecessor。
                 Object v; int c;
-                if (n == null)
+                if (n == null)                              //如果b.next为null，即b为最后一个。
                     break outer;
                 Node<K,V> f = n.next;
-                if (n != b.next)                // inconsistent read
+                if (n != b.next)                // inconsistent read   //不一致读。
                     break;
-                if ((v = n.value) == null) {    // n is deleted
+                if ((v = n.value) == null) {    // n is deleted   n被删除了。
                     n.helpDelete(b, f);
                     break;
                 }
-                if (b.value == null || v == n)  // b is deleted
+                if (b.value == null || v == n)  // b is deleted    b被删除了。
                     break;
-                if ((c = cpr(cmp, key, n.key)) == 0) {
+                if ((c = cpr(cmp, key, n.key)) == 0) {       // key就是这个key，所以直接返回
                     @SuppressWarnings("unchecked") V vv = (V)v;
                     return vv;
                 }
-                if (c < 0)
+                if (c < 0)                //key比n.key小，从outer重新来。
                     break outer;
                 b = n;
                 n = f;
@@ -766,32 +843,34 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * @param value the value that must be associated with key
      * @param onlyIfAbsent if should not insert if already present
      * @return the old value, or null if newly inserted
+     * 
+     * 插入方法。
      */
     private V doPut(K key, V value, boolean onlyIfAbsent) {
         Node<K,V> z;             // added node
-        if (key == null)
+        if (key == null)             //key不允许为null。
             throw new NullPointerException();
-        Comparator<? super K> cmp = comparator;
+        Comparator<? super K> cmp = comparator;   //获得比较器。
         outer: for (;;) {
-            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {
+            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {   
                 if (n != null) {
                     Object v; int c;
                     Node<K,V> f = n.next;
-                    if (n != b.next)               // inconsistent read
+                    if (n != b.next)               // inconsistent read   不一致读。
                         break;
-                    if ((v = n.value) == null) {   // n is deleted
+                    if ((v = n.value) == null) {   // n is deleted   n被删除了。
                         n.helpDelete(b, f);
                         break;
                     }
-                    if (b.value == null || v == n) // b is deleted
+                    if (b.value == null || v == n) // b is deleted   再检测一次是不是被删除了。
                         break;
-                    if ((c = cpr(cmp, key, n.key)) > 0) {
+                    if ((c = cpr(cmp, key, n.key)) > 0) {     //如果key>n.key，那么就往下一个找。
                         b = n;
                         n = f;
                         continue;
                     }
                     if (c == 0) {
-                        if (onlyIfAbsent || n.casValue(v, value)) {
+                        if (onlyIfAbsent || n.casValue(v, value)) {    //找到了，看能不能替换。
                             @SuppressWarnings("unchecked") V vv = (V)v;
                             return vv;
                         }
@@ -799,7 +878,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                     }
                     // else c < 0; fall through
                 }
-
+                //n为null。则直接插入到n后面
                 z = new Node<K,V>(key, value, n);
                 if (!b.casNext(n, z))
                     break;         // restart if lost race to append to b
@@ -807,10 +886,10 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
             }
         }
 
-        int rnd = ThreadLocalRandom.nextSecondarySeed();
-        if ((rnd & 0x80000001) == 0) { // test highest and lowest bits
-            int level = 1, max;
-            while (((rnd >>>= 1) & 1) != 0)
+        int rnd = ThreadLocalRandom.nextSecondarySeed();    //获取一个当前线程的随机数。
+        if ((rnd & 0x80000001) == 0) { // test highest and lowest bits   测试最高和最低位。
+            int level = 1, max;              //最高层和最低层
+            while (((rnd >>>= 1) & 1) != 0)         //寻找level。
                 ++level;
             Index<K,V> idx = null;
             HeadIndex<K,V> h = head;
@@ -904,13 +983,15 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * @param value if non-null, the value that must be
      * associated with key
      * @return the node, or null if not found
+     * 
+     * 删除key，value键值对。
      */
     final V doRemove(Object key, Object value) {
-        if (key == null)
+        if (key == null)        //判空。
             throw new NullPointerException();
         Comparator<? super K> cmp = comparator;
         outer: for (;;) {
-            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {
+            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {     //找到predecessor节点。
                 Object v; int c;
                 if (n == null)
                     break outer;
