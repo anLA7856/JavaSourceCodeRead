@@ -21,6 +21,7 @@ import java.util.SortedSet;
 import java.util.Spliterator;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.BiConsumer;
@@ -322,7 +323,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * 
      * head节点
      */
-    private transient volatile HeadIndex<K,V> head;
+    private transient volatile HeadIndex<K,V> head;      //headindex类型的，头节点。
 
     /**
      * The comparator used to maintain order in this map, or null if
@@ -567,8 +568,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      */
     static class Index<K,V> {
         final Node<K,V> node;
-        final Index<K,V> down;  //下方节点，
-        volatile Index<K,V> right;   //右侧节点。
+        final Index<K,V> down;        //下方节点，
+        volatile Index<K,V> right;   //右侧节点。 volatile类型
 
         /**
          * Creates index node with given values.
@@ -650,6 +651,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * 
      * HeadIndex节点，里面只有一个值level。
      * 并且只有一个构造方法。
+     * 代表层次的数量。
      */
     static final class HeadIndex<K,V> extends Index<K,V> {
         final int level;
@@ -688,13 +690,12 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * 
      */
     private Node<K,V> findPredecessor(Object key, Comparator<? super K> cmp) {
-        //判断为null
-    	if (key == null)
-            throw new NullPointerException(); // don't postpone errors
+        if (key == null)                       //判断为null
+            throw new NullPointerException();         
         for (;;) {
-            for (Index<K,V> q = head, r = q.right, d;;) {
-                if (r != null) {   //r为head下一个节点。
-                    Node<K,V> n = r.node;   //获得r的node
+            for (Index<K,V> q = head, r = q.right, d;;) {       //head为最顶上一层的头节点。
+                if (r != null) {              //r为head下一个节点。
+                    Node<K,V> n = r.node;    //获得r的node
                     K k = n.key;              //获得n的key。
                     if (n.value == null) {     //r为无效节点       
                         if (!q.unlink(r))  
@@ -703,14 +704,20 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                         continue;
                     }
                     if (cpr(cmp, key, k) > 0) {   //如果key>k,因为skiplist是有顺序的，所以可以这样比较。
-                        q = r;     //往前走一个
+                        q = r;     //q为r，找下一个节点。
                         r = r.right;
                         continue;
                     }
                 }
-                if ((d = q.down) == null)
-                    return q.node;   //找到了这个节点，down==null。
-                q = d;
+                /**
+                 * 前面方法有两个用，
+                 * 1 是找无效节点解除绑定
+                 * 2 是比较key和k，如果key>k，则直接会跳过下面的往后找，直到key>k
+                 */
+                //当前面方法过了后，就看是down是不是null，
+                if ((d = q.down) == null)       //此时q是最底层节点，那么就是这个node。
+                    return q.node;     //找到了这个节点，down==null。
+                q = d;                //往下找一层。
                 r = d.right;
             }
         }
@@ -847,29 +854,32 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
      * 插入方法。
      */
     private V doPut(K key, V value, boolean onlyIfAbsent) {
-        Node<K,V> z;             // added node
-        if (key == null)             //key不允许为null。
+        Node<K,V> z;                      //待添加的node。
+        if (key == null)                 //key不允许为null。
             throw new NullPointerException();
         Comparator<? super K> cmp = comparator;   //获得比较器。
         outer: for (;;) {
-            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {   
-                if (n != null) {
+            for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {      
+            	//找到对应与key的前一个节点。  
+                if (n != null) {     //当b.next不为null时候，就是把key插入到n和b之间。
                     Object v; int c;
                     Node<K,V> f = n.next;
-                    if (n != b.next)               // inconsistent read   不一致读。
+                    if (n != b.next)               //   不一致读。
                         break;
-                    if ((v = n.value) == null) {   // n is deleted   n被删除了。
-                        n.helpDelete(b, f);
+                    if ((v = n.value) == null) {   //   n被删除了。
+                        n.helpDelete(b, f);     //就是CAS方法删除。
                         break;
                     }
                     if (b.value == null || v == n) // b is deleted   再检测一次是不是被删除了。
                         break;
-                    if ((c = cpr(cmp, key, n.key)) > 0) {     //如果key>n.key，那么就往下一个找。
+                    if ((c = cpr(cmp, key, n.key)) > 0) {     
+                    	//如果key>n.key，那么就往下一个找。
+                    	//这一步为了再次检测一部，防止并发操作，别的线程先插入，
                         b = n;
                         n = f;
                         continue;
                     }
-                    if (c == 0) {
+                    if (c == 0) {     //相等就替换。
                         if (onlyIfAbsent || n.casValue(v, value)) {    //找到了，看能不能替换。
                             @SuppressWarnings("unchecked") V vv = (V)v;
                             return vv;
@@ -878,81 +888,84 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                     }
                     // else c < 0; fall through
                 }
-                //n为null。则直接插入到n后面
+                //当，n为null。
+                //或者前面检测都通过了，
+                //则直接插入到n后面
                 z = new Node<K,V>(key, value, n);
                 if (!b.casNext(n, z))
-                    break;         // restart if lost race to append to b
+                    break;         // 插入失败重新开始。
                 break outer;
             }
         }
-
+        //因为是跳表，所以要往它插入层的下层继续插入。
         int rnd = ThreadLocalRandom.nextSecondarySeed();    //获取一个当前线程的随机数。
         if ((rnd & 0x80000001) == 0) { // test highest and lowest bits   测试最高和最低位。
             int level = 1, max;              //最高层和最低层
-            while (((rnd >>>= 1) & 1) != 0)         //寻找level。
+            while (((rnd >>>= 1) & 1) != 0)         // // 抛硬币决定层次，
                 ++level;
             Index<K,V> idx = null;
             HeadIndex<K,V> h = head;
-            if (level <= (max = h.level)) {
+            if (level <= (max = h.level)) {     //随机选择的level<max，
                 for (int i = 1; i <= level; ++i)
-                    idx = new Index<K,V>(z, idx, null);
+                    idx = new Index<K,V>(z, idx, null);          //在每一层都添加。
             }
-            else { // try to grow by one level
-                level = max + 1; // hold in array and later pick the one to use
+            else {                                  //选择的这个level>max，那么就要增加一层。
+                level = max + 1;                   // 只增加一层。
                 @SuppressWarnings("unchecked")Index<K,V>[] idxs =
                     (Index<K,V>[])new Index<?,?>[level+1];
                 for (int i = 1; i <= level; ++i)
-                    idxs[i] = idx = new Index<K,V>(z, idx, null);
+                    idxs[i] = idx = new Index<K,V>(z, idx, null);       //首先从第一层到level层都连接上节点。
                 for (;;) {
                     h = head;
                     int oldLevel = h.level;
-                    if (level <= oldLevel) // lost race to add level
+                    if (level <= oldLevel) // 别的线程加入了，那么就退出。
                         break;
                     HeadIndex<K,V> newh = h;
                     Node<K,V> oldbase = h.node;
                     for (int j = oldLevel+1; j <= level; ++j)
                         newh = new HeadIndex<K,V>(oldbase, newh, idxs[j], j);
-                    if (casHead(h, newh)) {
+                    if (casHead(h, newh)) {          //替换head节点。
                         h = newh;
                         idx = idxs[level = oldLevel];
                         break;
                     }
                 }
             }
-            // find insertion points and splice in
-            splice: for (int insertionLevel = level;;) {
+            // 找到插入的点，并且把index插入。
+            splice: for (int insertionLevel = level;;) {     //从插入的level层次开始。
                 int j = h.level;
                 for (Index<K,V> q = h, r = q.right, t = idx;;) {
-                    if (q == null || t == null)
+                    if (q == null || t == null)        //退出
                         break splice;
-                    if (r != null) {
+                    if (r != null) {             //r不为null，
                         Node<K,V> n = r.node;
-                        // compare before deletion check avoids needing recheck
+                        // 在删除前比较，防止需要检查两次。
                         int c = cpr(cmp, key, n.key);
-                        if (n.value == null) {
+                        if (n.value == null) {        //已经被删除了，就不一致读。
                             if (!q.unlink(r))
                                 break;
                             r = q.right;
                             continue;
                         }
-                        if (c > 0) {
+                        if (c > 0) {      //右移
                             q = r;
                             r = r.right;
                             continue;
                         }
                     }
-
+                    //找到位置了。就开始插入。
                     if (j == insertionLevel) {
-                        if (!q.link(r, t))
+                        if (!q.link(r, t))      //连接
                             break; // restart
                         if (t.node.value == null) {
                             findNode(key);
                             break splice;
                         }
+                     // 标志的插入层自减 ，如果== 0 ，表示已经到底了，插入完毕，退出循环
                         if (--insertionLevel == 0)
                             break splice;
                     }
-
+                 // 上面节点已经插入完毕了，插入下一个节点
                     if (--j >= insertionLevel && j < level)
                         t = t.down;
                     q = q.down;
