@@ -42,33 +42,28 @@ import java.util.function.Function;
  *
  *不允许空键空值。
  *
- * <p>All {@code Map.Entry} pairs returned by methods in this class
- * and its views represent snapshots of mappings at the time they were
- * produced. They do <em>not</em> support the {@code Entry.setValue}
- * method. (Note however that it is possible to change mappings in the
- * associated map using {@code put}, {@code putIfAbsent}, or
- * {@code replace}, depending on exactly which effect you need.)
- *
- *
- * <p>This class and its views and iterators implement all of the
- * <em>optional</em> methods of the {@link Map} and {@link Iterator}
- * interfaces. Like most other concurrent collections, this class does
- * <em>not</em> permit the use of {@code null} keys or values because some
- * null return values cannot be reliably distinguished from the absence of
- * elements.
- *
- * <p>This class is a member of the
- * <a href="{@docRoot}/../technotes/guides/collections/index.html">
- * Java Collections Framework</a>.
+ * 可能会想着返回一个entry.view，它只是代表当前的一个快照。
+ * 
+ * 不支持setValue方法，但是可以用put以及putIfAbsent替代。
+ * 
+ * 也是 Java Collections Framework的一部分。
  *
  * @author Doug Lea
  * @param <K> the type of keys maintained by this map
  * @param <V> the type of mapped values
  * @since 1.6
  */
-public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
+public class ConcurrentSkipListMapAnalysis<K,V> extends AbstractMap<K,V>
     implements ConcurrentNavigableMap<K,V>, Cloneable, Serializable {
     /*
+     * 
+     * 用链表而不用数组的原因
+     * 1、数组可能会更加的复杂
+     * 2、可以使用更加简单的方法来实现复杂而重型的工作。
+     * lock-free
+     * 
+     * CAS替换next节点。
+     * 
      * This class implements a tree-like two-dimensionally linked skip
      * list in which the index levels are represented in separate
      * nodes from the base nodes holding data.  There are two reasons
@@ -312,6 +307,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Special value used to identify base-level header
+     * 基础的header借点。
      */
     private static final Object BASE_HEADER = new Object();
 
