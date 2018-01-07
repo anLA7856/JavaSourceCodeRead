@@ -832,7 +832,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                     @SuppressWarnings("unchecked") V vv = (V)v;
                     return vv;
                 }
-                if (c < 0)                //key比n.key小，从outer重新来。
+                if (c < 0)                //key比n.key小，跳出outer的双重循环。
                     break outer;
                 b = n;
                 n = f;
@@ -858,10 +858,14 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
         if (key == null)                 //key不允许为null。
             throw new NullPointerException();
         Comparator<? super K> cmp = comparator;   //获得比较器。
+        /**
+         * 以下为在最底层合适位置插入一个节点key，value。
+         * 或者替换最底层一个节点。
+         */
         outer: for (;;) {
             for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {      
             	//找到对应与key的前一个节点。  
-                if (n != null) {     //当b.next不为null时候，就是把key插入到n和b之间。
+                if (n != null) {             //当b.next不为null时候，就是把key插入到n和b之间。
                     Object v; int c;
                     Node<K,V> f = n.next;
                     if (n != b.next)               //   不一致读。
@@ -880,7 +884,9 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                         continue;
                     }
                     if (c == 0) {     //相等就替换。
-                        if (onlyIfAbsent || n.casValue(v, value)) {    //找到了，看能不能替换。
+                        if (onlyIfAbsent || n.casValue(v, value)) {    
+                        	//此处能够执行的条件为onlyIfAbsent == true，也就是不存在才替换，
+                        	//存在直接返回，或者cas成功。
                             @SuppressWarnings("unchecked") V vv = (V)v;
                             return vv;
                         }
@@ -892,11 +898,17 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                 //或者前面检测都通过了，
                 //则直接插入到n后面
                 z = new Node<K,V>(key, value, n);
-                if (!b.casNext(n, z))
+                if (!b.casNext(n, z))           //将z插入到b和n之间。
                     break;         // 插入失败重新开始。
                 break outer;
             }
         }
+        /**
+         * 以下为随机选择一个数，从刚刚插入的z节点，做一条单独的由
+         * down节点连接而成的链。
+         * 
+         * 然后，在通过splice循环，把这条链水平方向连起来。从而形成网状结构。
+         */
         //因为是跳表，所以要往它插入层的下层继续插入。
         int rnd = ThreadLocalRandom.nextSecondarySeed();    //获取一个当前线程的随机数。
         if ((rnd & 0x80000001) == 0) { // test highest and lowest bits   测试最高和最低位。
@@ -958,7 +970,7 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
                         if (!q.link(r, t))      //连接
                             break; // restart
                         if (t.node.value == null) {
-                            findNode(key);
+                            findNode(key);          //如果此时当前节点被删除，删除已经删除的节点。并且退出循环。
                             break splice;
                         }
                      // 标志的插入层自减 ，如果== 0 ，表示已经到底了，插入完毕，退出循环
@@ -1006,37 +1018,39 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
         outer: for (;;) {
             for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {     //找到predecessor节点。
                 Object v; int c;
-                if (n == null)
+                if (n == null)            //说明后面没有了，已经删掉了。
                     break outer;
                 Node<K,V> f = n.next;
-                if (n != b.next)                    // inconsistent read
+                if (n != b.next)                    // 不一致读，break内层循环
                     break;
-                if ((v = n.value) == null) {        // n is deleted
+                if ((v = n.value) == null) {        // n已经被删掉了。但是没删完全，就帮他一起删
                     n.helpDelete(b, f);
-                    break;
+                    break;                         //break内层循环
                 }
-                if (b.value == null || v == n)      // b is deleted
+                if (b.value == null || v == n)      // 重新找一遍predecessor。
                     break;
-                if ((c = cpr(cmp, key, n.key)) < 0)
+                if ((c = cpr(cmp, key, n.key)) < 0)    //说明没找到，退出outer。
                     break outer;
-                if (c > 0) {
+                if (c > 0) {                        // 右移
                     b = n;
                     n = f;
                     continue;
                 }
+                // value != null 表示需要同时校验key-value值
                 if (value != null && !value.equals(v))
                     break outer;
-                if (!n.casValue(v, null))
+                if (!n.casValue(v, null))   // CAS替换value为null。
                     break;
-                if (!n.appendMarker(f) || !b.casNext(n, f))
-                    findNode(key);                  // retry via findNode
+                if (!n.appendMarker(f) || !b.casNext(n, f))  //尝试取消链接。
+                    findNode(key);                  // 在这个方法里面会调用helpDelete方法，从而把value为null的值删除。
                 else {
-                    findPredecessor(key, cmp);      // clean index
-                    if (head.right == null)
+                    findPredecessor(key, cmp);      // 清除索引
+                    // head.right == null表示该层已经没有节点，删掉该层
+                    if (head.right == null)  
                         tryReduceLevel();
                 }
                 @SuppressWarnings("unchecked") V vv = (V)v;
-                return vv;
+                return vv;                                 //走到这里，说明删除成功了。
             }
         }
         return null;
