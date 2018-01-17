@@ -115,7 +115,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     /**
      * Shared internal API for dual stacks and queues.
      * 
-     * 外部方法，为双向stacks和queues。
+     * 外部方法，为双向stacks和queues。也就是栈和队列的服transferer方法。
+     * 里面只有一个方法。
      */
     abstract static class Transferer<E> {
         /**
@@ -134,7 +135,9 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         abstract E transfer(E e, boolean timed, long nanos);
     }
 
-    /** The number of CPUs, for spin control */
+    /** The number of CPUs, for spin control 
+     * cpu的数量
+     * */
     static final int NCPUS = Runtime.getRuntime().availableProcessors();
 
     /**
@@ -143,6 +146,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * variety of processors and OSes. Empirically, the best value
      * seems not to vary with number of CPUs (beyond 2) so is just
      * a constant.
+     * 
+     * 最大自旋次数。当blocking或者等待时候。
      */
     static final int maxTimedSpins = (NCPUS < 2) ? 0 : 32;
 
@@ -150,16 +155,24 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * The number of times to spin before blocking in untimed waits.
      * This is greater than timed value because untimed waits spin
      * faster since they don't need to check times on each spin.
+     * 
+     * 当unitmed waits时候的自旋次数，这个比上一个maxTimedSpins长一些。
+     * 因为和它相关的操作更加块。
      */
     static final int maxUntimedSpins = maxTimedSpins * 16;
 
     /**
      * The number of nanoseconds for which it is faster to spin
      * rather than to use timed park. A rough estimate suffices.
+     * 
+     * Threshold的自旋时间。
      */
     static final long spinForTimeoutThreshold = 1000L;
 
-    /** Dual stack */
+    /** Dual stack 
+     * 
+     * 双向的栈，栈的原理是LIFO，后进先出。
+     * */
     static final class TransferStack<E> extends Transferer<E> {
         /*
          * This extends Scherer-Scott dual stack algorithm, differing,
@@ -170,31 +183,52 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          */
 
         /* Modes for SNodes, ORed together in node fields */
-        /** Node represents an unfulfilled consumer */
+        /** Node represents an unfulfilled consumer
+         * 
+         *  代表未完成的消费者
+         *  */
         static final int REQUEST    = 0;
-        /** Node represents an unfulfilled producer */
+        /** Node represents an unfulfilled producer
+         * 代表未完成的生产者
+         *  */
         static final int DATA       = 1;
-        /** Node is fulfilling another unfulfilled DATA or REQUEST */
+        /** Node is fulfilling another unfulfilled DATA or REQUEST
+         * 代表另一个未完成的生产者或者消费者。
+         *  */
         static final int FULFILLING = 2;
 
-        /** Returns true if m has fulfilling bit set. */
+        /** Returns true if m has fulfilling bit set. 
+         * 返回true说明已经完成位设置。
+         * */
         static boolean isFulfilling(int m) { return (m & FULFILLING) != 0; }
 
-        /** Node class for TransferStacks. */
+        /** Node class for TransferStacks. 
+         * 栈的node，stack的node。
+         * */
         static final class SNode {
-            volatile SNode next;        // next node in stack
-            volatile SNode match;       // the node matched to this
-            volatile Thread waiter;     // to control park/unpark
-            Object item;                // data; or null for REQUESTs
-            int mode;
+            volatile SNode next;        // next node in stack    下一个节点。
+            volatile SNode match;       // the node matched to this    和本节点配对的节点。
+            volatile Thread waiter;     // to control park/unpark    当前线程，也就是需要被pack或者unpack的节点。
+            Object item;                // data; or null for REQUESTs     //传输的数据。
+            int mode;                  //模式。？
             // Note: item and mode fields don't need to be volatile
             // since they are always written before, and read after,
             // other volatile/atomic operations.
 
+            /**
+             * 构造方法
+             * @param item
+             */
             SNode(Object item) {
                 this.item = item;
             }
 
+            /**
+             * 把val接入到cmp后面一个节点。
+             * @param cmp
+             * @param val
+             * @return
+             */
             boolean casNext(SNode cmp, SNode val) {
                 return cmp == next &&
                     UNSAFE.compareAndSwapObject(this, nextOffset, cmp, val);
@@ -207,14 +241,16 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              *
              * @param s the node to match
              * @return true if successfully matched to s
+             * 
+             * 尝试去匹配某个Snode s，如果是这个节点，就唤醒它，
              */
             boolean tryMatch(SNode s) {
                 if (match == null &&
-                    UNSAFE.compareAndSwapObject(this, matchOffset, null, s)) {
-                    Thread w = waiter;
+                    UNSAFE.compareAndSwapObject(this, matchOffset, null, s)) {           //如果当前match还没有被匹配占坑，那么就把s来占坑。
+                    Thread w = waiter;                                      //waiter估计不是当前节点。
                     if (w != null) {    // waiters need at most one unpark
-                        waiter = null;
-                        LockSupport.unpark(w);
+                        waiter = null;                   //每人等待，
+                        LockSupport.unpark(w);            //唤醒
                     }
                     return true;
                 }
@@ -223,11 +259,18 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
             /**
              * Tries to cancel a wait by matching node to itself.
+             * 
+             * 尝试取消，就是把match换为自己。自己匹配自己，。前提是match为null。
+             * 也就是说，如果已经匹配了，那么这个方法不能取消。
              */
             void tryCancel() {
                 UNSAFE.compareAndSwapObject(this, matchOffset, null, this);
             }
 
+            /**
+             * 和上一个方法对比，则可以知道，判断match是不是自己。
+             * @return
+             */
             boolean isCancelled() {
                 return match == this;
             }
@@ -251,9 +294,18 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
             }
         }
 
-        /** The head (top) of the stack */
+        /** The head (top) of the stack
+         * SNode的头节点。
+         *  */
         volatile SNode head;
 
+        
+        /**
+         * 替换头节点。
+         * @param h
+         * @param nh
+         * @return
+         */
         boolean casHead(SNode h, SNode nh) {
             return h == head &&
                 UNSAFE.compareAndSwapObject(this, headOffset, h, nh);
@@ -265,6 +317,10 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * reused when possible to help reduce intervals between reads
          * and CASes of head and to avoid surges of garbage when CASes
          * to push nodes fail due to contention.
+         * 
+         * 构造方法，穿件一个snode。
+         * 
+         * 把next查到s的后面，e和mode都是s的
          */
         static SNode snode(SNode s, Object e, SNode next, int mode) {
             if (s == null) s = new SNode(e);
@@ -275,6 +331,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
         /**
          * Puts or takes an item.
+         * 
+         * 传送或者获取一个值。
          */
         @SuppressWarnings("unchecked")
         E transfer(E e, boolean timed, long nanos) {
@@ -284,6 +342,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * 1. If apparently empty or already containing nodes of same
              *    mode, try to push node on stack and wait for a match,
              *    returning it, or null if cancelled.
+             *    
+             *    如果为empty，那么就压入栈，并且等待
              *
              * 2. If apparently containing node of complementary mode,
              *    try to push a fulfilling node on to stack, match
@@ -291,64 +351,69 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              *    stack, and return matched item. The matching or
              *    unlinking might not actually be necessary because of
              *    other threads performing action 3:
+             *    刚好是互补的元素，如果已经存在元素，那么就压入一个fulfilling状态，即待完成节点进去。
+             *    
              *
              * 3. If top of stack already holds another fulfilling node,
              *    help it out by doing its match and/or pop
              *    operations, and then continue. The code for helping
              *    is essentially the same as for fulfilling, except
              *    that it doesn't return the item.
+             *    如果是相同mode的元素。那么就帮助这个元素去pop
+             *    
+             *    
              */
 
             SNode s = null; // constructed/reused as needed
-            int mode = (e == null) ? REQUEST : DATA;
+            int mode = (e == null) ? REQUEST : DATA;            //获取mode，看是拿还是取。
 
-            for (;;) {
+            for (;;) {                                  //自旋。
                 SNode h = head;
-                if (h == null || h.mode == mode) {  // empty or same-mode
-                    if (timed && nanos <= 0) {      // can't wait
-                        if (h != null && h.isCancelled())
-                            casHead(h, h.next);     // pop cancelled node
+                if (h == null || h.mode == mode) {  // empty or same-mode    //空或者相同的模式。
+                    if (timed && nanos <= 0) {      // can't wait    不能等待，块超时了。
+                        if (h != null && h.isCancelled())                 //取消把。
+                            casHead(h, h.next);     // pop cancelled node    //弹出头节点。
                         else
                             return null;
-                    } else if (casHead(h, s = snode(s, e, h, mode))) {
-                        SNode m = awaitFulfill(s, timed, nanos);
-                        if (m == s) {               // wait was cancelled
+                    } else if (casHead(h, s = snode(s, e, h, mode))) {        //否则，那么就在头节点后面插入这个节点。
+                        SNode m = awaitFulfill(s, timed, nanos);            //创建一个，等待中未完成的节点m。
+                        if (m == s) {               // wait was cancelled       //如果已经被取消了，由上面可知，自己指向自己时候就是取消。
                             clean(s);
                             return null;
                         }
-                        if ((h = head) != null && h.next == s)
-                            casHead(h, s.next);     // help s's fulfiller
-                        return (E) ((mode == REQUEST) ? m.item : s.item);
+                        if ((h = head) != null && h.next == s)    //如果head不为null，并且s就是head后面这个，
+                            casHead(h, s.next);     // help s's fulfiller        //帮忙释放掉s，也就是把s.next插入到h后面。
+                        return (E) ((mode == REQUEST) ? m.item : s.item);            //返回相应的item。
                     }
-                } else if (!isFulfilling(h.mode)) { // try to fulfill
-                    if (h.isCancelled())            // already cancelled
+                } else if (!isFulfilling(h.mode)) { // try to fulfill                //不是互补的模式，是另外一宗
+                    if (h.isCancelled())            // already cancelled    //如果h取消了，那么就换下一个。
                         casHead(h, h.next);         // pop and retry
-                    else if (casHead(h, s=snode(s, e, h, FULFILLING|mode))) {
-                        for (;;) { // loop until matched or waiters disappear
+                    else if (casHead(h, s=snode(s, e, h, FULFILLING|mode))) {           //否则，那么就创建一个s，相应模式
+                        for (;;) { // loop until matched or waiters disappear                //自旋，直到配对。
                             SNode m = s.next;       // m is s's match
-                            if (m == null) {        // all waiters are gone
+                            if (m == null) {        // all waiters are gone      //没有等待的了，那么就退出循环。
                                 casHead(s, null);   // pop fulfill node
                                 s = null;           // use new node next time
                                 break;              // restart main loop
                             }
-                            SNode mn = m.next;
-                            if (m.tryMatch(s)) {
-                                casHead(s, mn);     // pop both s and m
-                                return (E) ((mode == REQUEST) ? m.item : s.item);
+                            SNode mn = m.next;                                 //s.next的next.
+                            if (m.tryMatch(s)) {                               //用m的下一个用配对s
+                                casHead(s, mn);     // pop both s and m      //配对成功，那么就弹出m和s，因为head是没有用的，一次弹出两个。
+                                return (E) ((mode == REQUEST) ? m.item : s.item);           //返回相应元素。
                             } else                  // lost match
-                                s.casNext(m, mn);   // help unlink
+                                s.casNext(m, mn);   // help unlink               //帮助去连接。就算连接上了也不会出问题。
                         }
                     }
-                } else {                            // help a fulfiller
+                } else {                            // help a fulfiller           //匹配上了。
                     SNode m = h.next;               // m is h's match
-                    if (m == null)                  // waiter is gone
+                    if (m == null)                  // waiter is gone       //栈里面没有任何等待者了。
                         casHead(h, null);           // pop fulfilling node
                     else {
-                        SNode mn = m.next;
-                        if (m.tryMatch(h))          // help match
-                            casHead(h, mn);         // pop both h and m
+                        SNode mn = m.next;           //看看m的下一个
+                        if (m.tryMatch(h))          // help match        //匹配上了
+                            casHead(h, mn);         // pop both h and m    //一次弹出2个。
                         else                        // lost match
-                            h.casNext(m, mn);       // help unlink
+                            h.casNext(m, mn);       // help unlink    
                     }
                 }
             }
@@ -361,6 +426,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * @param timed true if timed wait
          * @param nanos timeout value
          * @return matched node, or s if cancelled
+         * 
+         * 如果一个node处于fulfill操作，也就是未完成的等待操作时候，就是这个方法去阻塞或者等待。
          */
         SNode awaitFulfill(SNode s, boolean timed, long nanos) {
             /*
@@ -385,30 +452,30 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * and don't wait at all, so are trapped in transfer
              * method rather than calling awaitFulfill.
              */
-            final long deadline = timed ? System.nanoTime() + nanos : 0L;
-            Thread w = Thread.currentThread();
+            final long deadline = timed ? System.nanoTime() + nanos : 0L;         //获得超时时间
+            Thread w = Thread.currentThread();           //获得当前线程
             int spins = (shouldSpin(s) ?
-                         (timed ? maxTimedSpins : maxUntimedSpins) : 0);
-            for (;;) {
-                if (w.isInterrupted())
+                         (timed ? maxTimedSpins : maxUntimedSpins) : 0);                   //判断是否需要自旋，以及自旋的次数。注意有timed这个boolean变量。
+            for (;;) {                            //自旋操作。
+                if (w.isInterrupted())             //当，当前线程中断时候，就取消。
                     s.tryCancel();
-                SNode m = s.match;
-                if (m != null)
+                SNode m = s.match;                //获取它的match。
+                if (m != null)                 //如果m匹配到了，那么返回m
                     return m;
-                if (timed) {
+                if (timed) {              //再次检测一次timed。
                     nanos = deadline - System.nanoTime();
                     if (nanos <= 0L) {
                         s.tryCancel();
                         continue;
                     }
                 }
-                if (spins > 0)
+                if (spins > 0)                //再次检查spins。
                     spins = shouldSpin(s) ? (spins-1) : 0;
                 else if (s.waiter == null)
                     s.waiter = w; // establish waiter so can park next iter
-                else if (!timed)
+                else if (!timed)            //如果没有timed，那么直接park当前线程。
                     LockSupport.park(this);
-                else if (nanos > spinForTimeoutThreshold)
+                else if (nanos > spinForTimeoutThreshold)      //带有nanos超时时间的park。
                     LockSupport.parkNanos(this, nanos);
             }
         }
@@ -417,16 +484,21 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * Returns true if node s is at head or there is an active
          * fulfiller.
          */
-        boolean shouldSpin(SNode s) {
+        boolean shouldSpin(SNode s) {        //判断s节点是否应该spin。
             SNode h = head;
-            return (h == s || h == null || isFulfilling(h.mode));
+            //当h==s时候，
+            //当h为null，也就是为空队列，s是第一个
+            //看h是否完成了位设置，完成了就可以了
+            return (h == s || h == null || isFulfilling(h.mode));     
         }
 
         /**
          * Unlinks s from the stack.
+         * 
+         * 从stack里面解除s。
          */
         void clean(SNode s) {
-            s.item = null;   // forget item
+            s.item = null;   // forget item   把item和waiter都置空。
             s.waiter = null; // forget thread
 
             /*
@@ -440,18 +512,18 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * find sentinel.
              */
 
-            SNode past = s.next;
-            if (past != null && past.isCancelled())
+            SNode past = s.next;         //获得下一个SNode。
+            if (past != null && past.isCancelled())       //如果past被cancell了，那么就再past一个。
                 past = past.next;
 
             // Absorb cancelled nodes at head
-            SNode p;
+            SNode p;                  //从头节点开始清除。
             while ((p = head) != null && p != past && p.isCancelled())
-                casHead(p, p.next);
+                casHead(p, p.next);                //做的事就是，把头节点，链接到下一个节点，节点不能为cancelled。
 
-            // Unsplice embedded nodes
+            // Unsplice embedded nodes      把植入的节点断链。
             while (p != null && p != past) {
-                SNode n = p.next;
+                SNode n = p.next;                     //在去链接头节点以后的节点，同样也不能为null。
                 if (n != null && n.isCancelled())
                     p.casNext(n, n.next);
                 else
@@ -474,7 +546,10 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         }
     }
 
-    /** Dual Queue */
+    /** Dual Queue 
+     * 
+     * 队列，也就是先进先出。
+     * */
     static final class TransferQueue<E> extends Transferer<E> {
         /*
          * This extends Scherer-Scott dual queue algorithm, differing,
@@ -485,23 +560,42 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * from non-null to null (for put) or vice versa (for take).
          */
 
-        /** Node class for TransferQueue. */
+        /** Node class for TransferQueue.
+         * 用于存储的QNode的节点。
+         *  */
         static final class QNode {
-            volatile QNode next;          // next node in queue
-            volatile Object item;         // CAS'ed to or from null
-            volatile Thread waiter;       // to control park/unpark
-            final boolean isData;
+            volatile QNode next;          // next node in queue          //一个next
+            volatile Object item;         // CAS'ed to or from null   一个item
+            volatile Thread waiter;       // to control park/unpark       一个waiter
+            final boolean isData;               //一个isDate，判断是否为数据。
 
+            /**
+             * 构造方法
+             * @param item
+             * @param isData
+             */
             QNode(Object item, boolean isData) {
                 this.item = item;
                 this.isData = isData;
             }
 
+            /**
+             * 替换下一个节点。
+             * @param cmp
+             * @param val
+             * @return
+             */
             boolean casNext(QNode cmp, QNode val) {
                 return next == cmp &&
                     UNSAFE.compareAndSwapObject(this, nextOffset, cmp, val);
             }
 
+            /**
+             * 替换item
+             * @param cmp
+             * @param val
+             * @return
+             */
             boolean casItem(Object cmp, Object val) {
                 return item == cmp &&
                     UNSAFE.compareAndSwapObject(this, itemOffset, cmp, val);
@@ -509,6 +603,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
             /**
              * Tries to cancel by CAS'ing ref to this as item.
+             * 
+             * 也是把item设为自己。，前一个是把match设为自己。
              */
             void tryCancel(Object cmp) {
                 UNSAFE.compareAndSwapObject(this, itemOffset, cmp, this);
@@ -522,6 +618,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * Returns true if this node is known to be off the queue
              * because its next pointer has been forgotten due to
              * an advanceHead operation.
+             * 
+             * 判断是否，这个几点已经删除了。也就是自己指向自己。
              */
             boolean isOffList() {
                 return next == this;
@@ -546,19 +644,26 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
             }
         }
 
-        /** Head of queue */
+        /** Head of queue 
+         * 头节点
+         * */
         transient volatile QNode head;
-        /** Tail of queue */
+        /** Tail of queue
+         * 尾节点。
+         *  */
         transient volatile QNode tail;
         /**
          * Reference to a cancelled node that might not yet have been
          * unlinked from queue because it was the last inserted node
          * when it was cancelled.
+         * 
+         * 保存一个刚刚被清除的节点。
+         * 可能已经断开连接了，但是是最后一个插入的。
          */
         transient volatile QNode cleanMe;
 
         TransferQueue() {
-            QNode h = new QNode(null, false); // initialize to dummy node.
+            QNode h = new QNode(null, false); // initialize to dummy node.此时head节点为这个，并且把head指向它。不是data类型。
             head = h;
             tail = h;
         }
@@ -566,15 +671,19 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
         /**
          * Tries to cas nh as new head; if successful, unlink
          * old head's next node to avoid garbage retention.
+         * 
+         * 尝试把nh作为新的head节点。
          */
         void advanceHead(QNode h, QNode nh) {
             if (h == head &&
                 UNSAFE.compareAndSwapObject(this, headOffset, h, nh))
-                h.next = h; // forget old next
+                h.next = h; // forget old next  自己指向自己。
         }
 
         /**
          * Tries to cas nt as new tail.
+         * 
+         * 尝试替换tail，把nt来替换tail。
          */
         void advanceTail(QNode t, QNode nt) {
             if (tail == t)
@@ -583,6 +692,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
         /**
          * Tries to CAS cleanMe slot.
+         * 
+         * 来替换cleanMe这个节点。
          */
         boolean casCleanMe(QNode cmp, QNode val) {
             return cleanMe == cmp &&
@@ -591,6 +702,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
 
         /**
          * Puts or takes an item.
+         * 
+         * transfer方法。
          */
         @SuppressWarnings("unchecked")
         E transfer(E e, boolean timed, long nanos) {
@@ -619,61 +732,61 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * than having them implicitly interspersed.
              */
 
-            QNode s = null; // constructed/reused as needed
-            boolean isData = (e != null);
+            QNode s = null; // constructed/reused as needed     
+            boolean isData = (e != null);            //判断是否为数据，
 
-            for (;;) {
-                QNode t = tail;
+            for (;;) {                           //自旋操作
+                QNode t = tail;                     //分别获取tail和head。
                 QNode h = head;
                 if (t == null || h == null)         // saw uninitialized value
-                    continue;                       // spin
+                    continue;                       // spin        如果t和h都为null，则自旋。
 
-                if (h == t || t.isData == isData) { // empty or same-mode
+                if (h == t || t.isData == isData) { // empty or same-mode           //为null，或者是同样的提供者，比如都是生产者。
                     QNode tn = t.next;
-                    if (t != tail)                  // inconsistent read
+                    if (t != tail)                  // inconsistent read               //不一致读，
                         continue;
-                    if (tn != null) {               // lagging tail
+                    if (tn != null) {               // lagging tail                //发现有新的tail，那么就替换，
                         advanceTail(t, tn);
                         continue;
                     }
-                    if (timed && nanos <= 0)        // can't wait
+                    if (timed && nanos <= 0)        // can't wait                 //超时了不能等待了。
                         return null;
-                    if (s == null)
+                    if (s == null)                             //如果s为null，那么初始化它。
                         s = new QNode(e, isData);
-                    if (!t.casNext(null, s))        // failed to link in
+                    if (!t.casNext(null, s))        // failed to link in        尝试把s插入到t节点的next。              
                         continue;
 
-                    advanceTail(t, s);              // swing tail and wait
-                    Object x = awaitFulfill(s, e, timed, nanos);
-                    if (x == s) {                   // wait was cancelled
+                    advanceTail(t, s);              // swing tail and wait          //把s插入到t后面。
+                    Object x = awaitFulfill(s, e, timed, nanos);               //阻塞
+                    if (x == s) {                   // wait was cancelled        如果发现被取消了，那么就调用clean方法。
                         clean(t, s);
                         return null;
                     }
 
-                    if (!s.isOffList()) {           // not already unlinked
-                        advanceHead(t, s);          // unlink if head
-                        if (x != null)              // and forget fields
+                    if (!s.isOffList()) {           // not already unlinked             //如果s还在list。
+                        advanceHead(t, s);          // unlink if head                 //把s来替换t，从队头插入嘛。
+                        if (x != null)              // and forget fields         头节点，需要牺牲。       
                             s.item = s;
                         s.waiter = null;
                     }
-                    return (x != null) ? (E)x : e;
+                    return (x != null) ? (E)x : e;                //最终返回，x或者，e。
 
-                } else {                            // complementary-mode
-                    QNode m = h.next;               // node to fulfill
+                } else {                            // complementary-mode      互补的模式，刚好遇到了。     
+                    QNode m = h.next;               // node to fulfill          获得h的next。
                     if (t != tail || m == null || h != head)
-                        continue;                   // inconsistent read
+                        continue;                   // inconsistent read         不一致读。
 
-                    Object x = m.item;
-                    if (isData == (x != null) ||    // m already fulfilled
-                        x == m ||                   // m cancelled
-                        !m.casItem(x, e)) {         // lost CAS
+                    Object x = m.item;                                //获取m的item
+                    if (isData == (x != null) ||    // m already fulfilled    m已经完成了。      
+                        x == m ||                   // m cancelled     m已经取消
+                        !m.casItem(x, e)) {         // lost CAS        CAS失败
                         advanceHead(h, m);          // dequeue and retry
                         continue;
                     }
 
-                    advanceHead(h, m);              // successfully fulfilled
-                    LockSupport.unpark(m.waiter);
-                    return (x != null) ? (E)x : e;
+                    advanceHead(h, m);              // successfully fulfilled     //成功的完成了。
+                    LockSupport.unpark(m.waiter);                         //唤醒m的waiter。
+                    return (x != null) ? (E)x : e;                        //返回。
                 }
             }
         }
