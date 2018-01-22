@@ -799,43 +799,50 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
          * @param timed true if timed wait
          * @param nanos timeout value
          * @return matched item, or s if cancelled
+         * 
+         * 自旋或者block。直到node节点fulfilled，完成。
          */
         Object awaitFulfill(QNode s, E e, boolean timed, long nanos) {
             /* Same idea as TransferStack.awaitFulfill */
-            final long deadline = timed ? System.nanoTime() + nanos : 0L;
-            Thread w = Thread.currentThread();
+            final long deadline = timed ? System.nanoTime() + nanos : 0L;    //获取超时时间
+            Thread w = Thread.currentThread();            //获取当前线程。
             int spins = ((head.next == s) ?
-                         (timed ? maxTimedSpins : maxUntimedSpins) : 0);
-            for (;;) {
-                if (w.isInterrupted())
+                         (timed ? maxTimedSpins : maxUntimedSpins) : 0);            //判断spins的值
+            for (;;) {                                    //自旋
+                if (w.isInterrupted())                       //如果w当前线程中断，则尝试取消e。
                     s.tryCancel(e);
                 Object x = s.item;
-                if (x != e)
+             // 如果线程进行了阻塞 -> 唤醒或者中断了，那么x != e 肯定成立，直接返回当前节点即可
+                if (x != e)                      //返回x。      
                     return x;
-                if (timed) {
+                if (timed) {                     //超时判断
                     nanos = deadline - System.nanoTime();
                     if (nanos <= 0L) {
                         s.tryCancel(e);
                         continue;
                     }
                 }
-                if (spins > 0)
+                if (spins > 0)                  //自减自旋次数。
                     --spins;
-                else if (s.waiter == null)
+                else if (s.waiter == null)                      //设置waiter
                     s.waiter = w;
-                else if (!timed)
+                else if (!timed)                               //阻塞当前线程。
                     LockSupport.park(this);
-                else if (nanos > spinForTimeoutThreshold)
+                else if (nanos > spinForTimeoutThreshold)           //带有超时的阻塞。
                     LockSupport.parkNanos(this, nanos);
             }
         }
 
         /**
          * Gets rid of cancelled node s with original predecessor pred.
+         * 
+         * 清理某个节点s。
          */
         void clean(QNode pred, QNode s) {
-            s.waiter = null; // forget thread
+            s.waiter = null; // forget thread    //清理工作。
             /*
+             * 最后一个插入的节点可能无法被删除，这个时候就需要一个cleanMe节点，用来表示前一个被删除的节点，
+             * 
              * At any given time, exactly one node on list cannot be
              * deleted -- the last inserted node. To accommodate this,
              * if we cannot delete s, we save its predecessor as
@@ -843,43 +850,43 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
              * first. At least one of node s or the node previously
              * saved can always be deleted, so this always terminates.
              */
-            while (pred.next == s) { // Return early if already unlinked
+            while (pred.next == s) { // Return early if already unlinked        确保s是pred的下一个
                 QNode h = head;
-                QNode hn = h.next;   // Absorb cancelled first node as head
-                if (hn != null && hn.isCancelled()) {
+                QNode hn = h.next;   // Absorb cancelled first node as head            //获取head的第一个节点。
+                if (hn != null && hn.isCancelled()) {            //如果hn已经被删除，那么需要把head往后面移动一个。
                     advanceHead(h, hn);
                     continue;
                 }
-                QNode t = tail;      // Ensure consistent read for tail
-                if (t == h)
+                QNode t = tail;      // Ensure consistent read for tail       用来确保一致性。
+                if (t == h)               //说明队列为null。
                     return;
                 QNode tn = t.next;
-                if (t != tail)
+                if (t != tail)                   //不一致读。
                     continue;
-                if (tn != null) {
+                if (tn != null) {                           //把tn替换为tail。
                     advanceTail(t, tn);
                     continue;
                 }
-                if (s != t) {        // If not tail, try to unsplice
+                if (s != t) {        // If not tail, try to unsplice     //如果s不是尾节点，则需要把s替换。
                     QNode sn = s.next;
                     if (sn == s || pred.casNext(s, sn))
                         return;
                 }
-                QNode dp = cleanMe;
+                QNode dp = cleanMe;                     //用来清除刚刚加入的节点。
                 if (dp != null) {    // Try unlinking previous cancelled node
-                    QNode d = dp.next;
+                    QNode d = dp.next;                   //d是最后一个，如果有
                     QNode dn;
-                    if (d == null ||               // d is gone or
-                        d == dp ||                 // d is off list or
-                        !d.isCancelled() ||        // d not cancelled or
-                        (d != t &&                 // d not tail and
+                    if (d == null ||               // d is gone or   d为null
+                        d == dp ||                 // d is off list or  
+                        !d.isCancelled() ||        // d not cancelled or   d没有被删除。
+                        (d != t &&                 // d not tail and     d不为tail。
                          (dn = d.next) != null &&  //   has successor
                          dn != d &&                //   that is on list
-                         dp.casNext(d, dn)))       // d unspliced
+                         dp.casNext(d, dn)))       // d unspliced       //接触t，满足前面的答案。
                         casCleanMe(dp, null);
                     if (dp == pred)
                         return;      // s is already saved node
-                } else if (casCleanMe(null, pred))
+                } else if (casCleanMe(null, pred))       
                     return;          // Postpone cleaning s
             }
         }
@@ -910,11 +917,15 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * this is accessed only at most once per public method, there
      * isn't a noticeable performance penalty for using volatile
      * instead of final here.
+     * 
+     * 一个父类的transferer
      */
     private transient volatile Transferer<E> transferer;
 
     /**
      * Creates a {@code SynchronousQueue} with nonfair access policy.
+     * 
+     * 默认为非公平。aaaaaa
      */
     public SynchronousQueue() {
         this(false);
@@ -936,6 +947,9 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @throws InterruptedException {@inheritDoc}
      * @throws NullPointerException {@inheritDoc}
+     * 
+     * 插入，调用transferer.transfer的方法。
+     * 插入特定元素。
      */
     public void put(E e) throws InterruptedException {
         if (e == null) throw new NullPointerException();
@@ -953,6 +967,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *         specified waiting time elapses before a consumer appears
      * @throws InterruptedException {@inheritDoc}
      * @throws NullPointerException {@inheritDoc}
+     * 
+     * 插入特定元素。
      */
     public boolean offer(E e, long timeout, TimeUnit unit)
         throws InterruptedException {
@@ -972,6 +988,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * @return {@code true} if the element was added to this queue, else
      *         {@code false}
      * @throws NullPointerException if the specified element is null
+     * 
+     * 插入特定元素。
      */
     public boolean offer(E e) {
         if (e == null) throw new NullPointerException();
@@ -984,6 +1002,10 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @return the head of this queue
      * @throws InterruptedException {@inheritDoc}
+     * 
+     * 获取特定元素。
+     * 
+     * 获取不到就报错。
      */
     public E take() throws InterruptedException {
         E e = transferer.transfer(null, false, 0);
@@ -1001,6 +1023,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * @return the head of this queue, or {@code null} if the
      *         specified waiting time elapses before an element is present
      * @throws InterruptedException {@inheritDoc}
+     * 
+     * 获取特定的队列第一个元素。
      */
     public E poll(long timeout, TimeUnit unit) throws InterruptedException {
         E e = transferer.transfer(null, true, unit.toNanos(timeout));
@@ -1015,6 +1039,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @return the head of this queue, or {@code null} if no
      *         element is available
+     *         
+     * 返回第一个元素。
      */
     public E poll() {
         return transferer.transfer(null, true, 0);
@@ -1025,6 +1051,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * A {@code SynchronousQueue} has no internal capacity.
      *
      * @return {@code true}
+     * 
+     * 永远为null
      */
     public boolean isEmpty() {
         return true;
@@ -1035,6 +1063,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * A {@code SynchronousQueue} has no internal capacity.
      *
      * @return zero
+     * 
+     * 永远为0
      */
     public int size() {
         return 0;
@@ -1045,6 +1075,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * A {@code SynchronousQueue} has no internal capacity.
      *
      * @return zero
+     * 
+     * 0
      */
     public int remainingCapacity() {
         return 0;
@@ -1053,6 +1085,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     /**
      * Does nothing.
      * A {@code SynchronousQueue} has no internal capacity.
+     * 本来就是空的。
      */
     public void clear() {
     }
@@ -1063,6 +1096,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @param o the element
      * @return {@code false}
+     * 
+     * 永远不存在
      */
     public boolean contains(Object o) {
         return false;
@@ -1074,6 +1109,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @param o the element to remove
      * @return {@code false}
+     * 
+     * 永远删除失败。
      */
     public boolean remove(Object o) {
         return false;
@@ -1085,6 +1122,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @param c the collection
      * @return {@code false} unless given collection is empty
+     * 
+     * false
      */
     public boolean containsAll(Collection<?> c) {
         return c.isEmpty();
@@ -1096,6 +1135,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      *
      * @param c the collection
      * @return {@code false}
+     * 
+     * 删除所有。
      */
     public boolean removeAll(Collection<?> c) {
         return false;
@@ -1118,6 +1159,8 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * unless actively waited on.
      *
      * @return {@code null}
+     * 
+     * 返回null。
      */
     public E peek() {
         return null;
@@ -1128,6 +1171,10 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
      * {@code false}.
      *
      * @return an empty iterator
+     * 
+     * 返回一个空iterator。
+     * 
+     * emptyiterator。
      */
     public Iterator<E> iterator() {
         return Collections.emptyIterator();
@@ -1220,7 +1267,7 @@ public class SynchronousQueue<E> extends AbstractQueue<E>
     static class FifoWaitQueue extends WaitQueue {
         private static final long serialVersionUID = -3623113410248163686L;
     }
-    private ReentrantLock qlock;
+    private ReentrantLock qlock;                         //用到了reentrantlock。   就下面两个序列化方法用到。
     private WaitQueue waitingProducers;
     private WaitQueue waitingConsumers;
 
